@@ -1,7 +1,9 @@
 /**
  * adaptiveRuntimeContext.js — Adaptive Engine live runtime context (Phase 4)
  *
- * Single decision path for the running app. Mounted once inside
+ * App-level decision path for the running app (module pages may run an
+ * additional, independent path through `useModuleAdaptation`, which keeps its
+ * own hysteresis scope — see `moduleStateScope`). Mounted once inside
  * `ContextProvider`, it drives `useAdaptiveBehavioralEngine` with the live
  * ContextSnapshot (module resolved from the current URL path), the
  * authenticated userId, and the D14 `userPreferences` fragment — then exposes
@@ -17,7 +19,7 @@
  * Ownership: Adaptive Experience Engineer
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
@@ -26,6 +28,12 @@ import {
 } from "@/context/ContextProvider";
 import { useAdaptiveBehavioralEngine } from "@/hooks/useAdaptiveBehavioralEngine";
 import { buildUserPreferencesFragment } from "@/support/framework/userPreferencesAdapter";
+import { usePersonalizationProfile } from "@/adaptive/personalization/usePersonalizationProfile";
+import { resolveProfileView } from "@/adaptive/personalization/profileModel";
+import { promoteFromFeedback } from "@/adaptive/personalization/profileStore";
+import { isReflectionEnabled } from "@backend/adaptive/engine/featureFlags";
+import { createReEvaluationScheduler } from "@/adaptive/execution/reEvaluationScheduler";
+import { bindExecutionStoreToUser } from "@/adaptive/execution/uiExecution";
 import {
   getCanonicalSupportModuleId,
   getSupportModules,
@@ -80,36 +88,78 @@ export function AdaptiveRuntimeProvider({ children }) {
     [user],
   );
 
+  // Temporal stability (Task 2): the engine schedules its own re-evaluation
+  // (confirmation windows, minimum-duration ends, periodic review of active
+  // adaptations). Refresh the live snapshot at that time so pending entries
+  // confirm and stale adaptations expire even without new user interaction.
+  // Scheduled from every committed decision (Task 3) — including decisions
+  // whose effective plan is unchanged and so cause no re-render.
+  // Task 6: one pending timer, clamped delay, and a refresh budget so a
+  // re-evaluation that is always due can never become a runaway loop.
+  const refreshRef = useRef(refreshContext);
+  refreshRef.current = refreshContext;
+  const schedulerRef = useRef(null);
+  if (schedulerRef.current === null) {
+    schedulerRef.current = createReEvaluationScheduler({
+      refresh: () => {
+        if (typeof refreshRef.current === "function") refreshRef.current();
+      },
+    });
+  }
+  const onDecision = useCallback((outcome) => {
+    schedulerRef.current.schedule(outcome?.plan?.reEvaluateAt);
+  }, []);
+  useEffect(() => () => schedulerRef.current?.reset(), []);
+
+  // Task 5: persistent, user-owned personalization profile (local copy +
+  // account sync). Read before every decision.
+  const userId = user?.id ?? null;
+
+  // Task 6: per-user isolation. Consent decisions / dismissals belong to the
+  // signed-in user, and a re-evaluation scheduled for one user never fires
+  // for the next. Layout effect: bound before the UI runtime resolves.
+  useLayoutEffect(() => {
+    bindExecutionStoreToUser(userId);
+    schedulerRef.current?.reset();
+  }, [userId]);
+  const personalizationStore = usePersonalizationProfile(userId);
+  const profile = personalizationStore.profile;
+  const temporary = personalizationStore.temporary;
+  const profileLoaded = Boolean(profile);
+  useEffect(() => {
+    // Promote feedback that became reliable since the last session.
+    if (userId && profileLoaded && isReflectionEnabled()) promoteFromFeedback(userId).catch(() => {});
+  }, [userId, profileLoaded]);
+  const personalization = useMemo(
+    () =>
+      userId && profile
+        ? resolveProfileView(profile, { moduleId, temporary: temporary ?? undefined, includeLearned: isReflectionEnabled() })
+        : undefined,
+    [userId, profile, temporary, moduleId],
+  );
+
   const engine = useAdaptiveBehavioralEngine({
     moduleId,
     getSnapshot: context != null ? getSnapshot : undefined,
     userId: user?.id,
     userPreferences,
+    onDecision,
+    personalizationProfile: profile,
+    temporaryPreferences: temporary,
   });
-
-  // Temporal stability (Task 2): the engine schedules its own re-evaluation
-  // (confirmation windows, minimum-duration ends, periodic review of active
-  // adaptations). Refresh the live snapshot at that time so pending entries
-  // confirm and stale adaptations expire even without new user interaction.
-  const reEvaluateAt = engine.plan?.reEvaluateAt;
-  useEffect(() => {
-    if (typeof reEvaluateAt !== "number" || typeof refreshContext !== "function") {
-      return undefined;
-    }
-    const delay = Math.min(Math.max(reEvaluateAt - Date.now(), 250), 10 * 60 * 1000);
-    const timer = setTimeout(() => {
-      refreshContext();
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [reEvaluateAt, refreshContext]);
 
   const value = useMemo(
     () => ({
       moduleId,
+      // Feedback capture (Task 4) is per user; never written into traces.
+      userId: user?.id ?? null,
       userPreferences,
+      // Task 5: resolved profile for this module (presentation hints, offer
+      // suppression). Undefined until the profile is loaded.
+      personalization,
       ...engine,
     }),
-    [moduleId, userPreferences, engine],
+    [moduleId, user?.id, userPreferences, personalization, engine],
   );
 
   return (
