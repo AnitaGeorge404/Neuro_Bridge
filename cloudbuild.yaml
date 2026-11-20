@@ -1,7 +1,7 @@
 # Cloud Build: test -> build -> push to Artifact Registry -> deploy to Cloud Run.
-# gcloud builds submit --config cloudbuild.yaml --substitutions=_REGION=us-central1
+# gcloud builds submit --config cloudbuild.yaml --region=europe-west2
 substitutions:
-  _REGION: us-central1
+  _REGION: europe-west2
   _SERVICE: neurobridge-api
   _REPO: neurobridge
 
