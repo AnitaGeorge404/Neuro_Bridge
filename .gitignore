@@ -47,3 +47,5 @@ docs/architecture/adaptive-engine-spec.md
 supabase/.temp/
 
 .firebase/
+__pycache__/
+*.py[cod]
