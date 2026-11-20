@@ -1,5 +1,25 @@
 # NEUROBRIDGE — AI CHANGELOG
 
+## 2026-11-20 — Bri Agent V2 + optional Gemini Live
+- **Bri V2** (`backend/services/bri_v2/`), behind `BRI_AGENT_V2_ENABLED` (default on). V1 stays intact as the fallback, both for any V2 fault before a write and when the flag is off.
+- **Follow-ups:** persisted per-conversation state (new table `agent_conversation_states`).
+  - Deterministic handling of yes / no / not now / the first one / I finished it / what next.
+  - Gemini gets the backend's interpretation of accepted offers, choices, "still stuck", "make it easier" and corrections.
+  - Declined approaches are not re-offered.
+- **Action policy:**
+  - LOW/MODERATE/HIGH tiers, enforced on the backend.
+  - Argument validation, a per-turn tool budget, and blocking of a duplicate write in the same turn.
+  - Writes are verified against the database before Bri can report success.
+  - A typed "yes" executes the pending confirmation; the new `POST /tool/decline` clears it on the server.
+- **New tools (V2-only):** `complete_task_step`, and `save_user_preference` (whitelisted keys, only on an explicit request).
+- **Bug fix:** chat history fed Gemini the *oldest* 10 messages instead of the most recent, so longer conversations lost context. It now sends the latest 12.
+- **Gemini Live (optional, `GEMINI_LIVE_ENABLED`, default off):**
+  - Ephemeral-token endpoint with server-locked model, prompt and tools.
+  - Live tool relay through the V2 policy.
+  - Transcripts persisted to the conversation.
+  - Browser client and a chat header button, with automatic fallback to the existing chat and voice input.
+- **Tests:** 257 backend tests pass (58 new). One existing test now uses a non-explicit request, because an explicit "break down…" request runs directly under the new policy. 4 frontend failures were already there and are unrelated (TaskBreakdown work in progress; a duplicate sr-only announcement in an AgentChat test).
+
 ## 2026-11-20 — Google platform integration (Batch 1–4)
 - **SDK:** all Gemini calls moved to `google-genai` (`services/genai_compat.py` adapter, `google_ai_service.py` cached client, Vertex AI switch, `observe()` telemetry). Tests swapped to the adapter; conftest blanks Google env so tests never hit live APIs.
 - **Bri:** new READ tool `search_my_documents` (embeddings); `create_task_breakdown` now uses Gemini structured output.

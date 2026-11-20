@@ -12,7 +12,8 @@ from ..database import get_db, SessionLocal
 from ..auth import get_current_user, CurrentUser
 from ..models import agent_models
 from ..schemas import agent_schemas
-from ..services.agent_service import AgentOrchestrator
+from ..services.agent_service import AgentOrchestrator  # noqa: F401 (V1, still the fallback)
+from ..services.bri_v2 import make_orchestrator
 from ..services.rate_limiter import SlidingWindowRateLimiter
 
 router = APIRouter()
@@ -46,6 +47,17 @@ def _enforce_rate_limit(user: CurrentUser) -> None:
     limiter.check(user.id)
 
 
+def _owned_conversation(db: Session, user: CurrentUser, conversation_id: Optional[int]) -> agent_models.AgentConversation:
+    """Strict ownership lookup (never creates) — 404 for missing or someone else's."""
+    conversation = db.query(agent_models.AgentConversation).filter(
+        agent_models.AgentConversation.id == conversation_id,
+        agent_models.AgentConversation.user_id == user.id,
+    ).first() if conversation_id else None
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation
+
+
 def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
     if not authorization or not authorization.lower().startswith("bearer "):
         return None
@@ -68,11 +80,19 @@ def _get_or_create_conversation(db: Session, user: CurrentUser, conversation_id:
     return conversation
 
 
+_HISTORY_TURNS = 12
+
+
 def _recent_history(db: Session, conversation_id: int) -> list[dict]:
-    history = db.query(agent_models.AgentMessage).filter(
+    """The MOST RECENT turns (excluding the just-saved user message), oldest first.
+    Previously this took the *oldest* 10 messages, so in any conversation longer
+    than that Gemini never saw what Bri had just said — follow-ups like "yes"
+    lost their referent."""
+    latest = db.query(agent_models.AgentMessage).filter(
         agent_models.AgentMessage.conversation_id == conversation_id
-    ).order_by(agent_models.AgentMessage.created_at.asc()).limit(10).all()
-    return [{"role": msg.role, "content": msg.content} for msg in history[:-1]]
+    ).order_by(agent_models.AgentMessage.created_at.desc(), agent_models.AgentMessage.id.desc()).limit(_HISTORY_TURNS + 1).all()
+    latest = list(reversed(latest))
+    return [{"role": msg.role, "content": msg.content} for msg in latest[:-1]]
 
 
 @router.post("/chat", response_model=agent_schemas.AgentChatResponse)
@@ -92,7 +112,7 @@ def chat_with_agent(
 
     history_payload = _recent_history(db, conversation.id)
 
-    orchestrator = AgentOrchestrator(db, user, user_token=_extract_bearer_token(authorization))
+    orchestrator = make_orchestrator(db, user, user_token=_extract_bearer_token(authorization))
     client_context = request.client_context.model_dump(exclude_none=True) if request.client_context else None
     result = orchestrator.process_message(request.message, history_payload, client_context, conversation_id=conversation.id)
 
@@ -148,7 +168,7 @@ def chat_with_agent_stream(
     def run() -> None:
         thread_db = SessionLocal()
         try:
-            orchestrator = AgentOrchestrator(thread_db, user, user_token=user_token)
+            orchestrator = make_orchestrator(thread_db, user, user_token=user_token)
             result = orchestrator.process_message(
                 request.message, history_payload, client_context, conversation_id=conversation_id, on_event=on_event
             )
@@ -203,7 +223,7 @@ def execute_tool(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    orchestrator = AgentOrchestrator(db, user, user_token=_extract_bearer_token(authorization))
+    orchestrator = make_orchestrator(db, user, user_token=_extract_bearer_token(authorization))
     outcome = orchestrator.execute_confirmed_tool(request.tool_name, request.tool_args, conversation_id=request.conversation_id)
 
     is_replay = outcome.get("idempotent_replay", False)
@@ -246,3 +266,113 @@ def get_conversation_history(
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
+
+
+# ---------------------------------------------------------------------------
+# Gemini Live (optional real-time voice). Every endpoint degrades to a
+# structured "unavailable" answer; the frontend then keeps the existing
+# chat + voice-input experience. See services/bri_v2/live.py.
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+from ..services.bri_v2 import config as bri_config, live as bri_live  # noqa: E402
+from ..services.bri_v2.orchestrator import BriAgentV2  # noqa: E402
+from ..services.bri_v2.state import load_state  # noqa: E402
+
+_live_limiter = SlidingWindowRateLimiter(
+    bri_config.live_sessions_per_hour(), 3600,
+    "You've started several voice sessions recently — text chat is still available.",
+)
+
+
+class LiveSessionRequest(BaseModel):
+    conversation_id: Optional[int] = None
+
+
+class LiveToolRequest(BaseModel):
+    conversation_id: int
+    name: str = Field(..., max_length=64)
+    args: dict = Field(default_factory=dict)
+    transcript: str = Field(default="", max_length=2000)
+
+
+class LiveTurnRequest(BaseModel):
+    conversation_id: int
+    role: str = Field(..., pattern="^(user|model)$")
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.get("/live/config")
+def live_config(user: CurrentUser = Depends(get_current_user)):
+    ok, reason = bri_live.availability()
+    return {"available": ok and not user.is_demo, "reason": "demo_mode" if (ok and user.is_demo) else reason,
+            "model": bri_config.live_model() if ok else None}
+
+
+@router.post("/live/session")
+def live_session(request: LiveSessionRequest, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    if user.is_demo:
+        return {"available": False, "reason": "demo_mode"}
+    ok, reason = bri_live.availability()
+    if not ok:
+        return {"available": False, "reason": reason}
+    _live_limiter.check(user.id)
+    conversation = _get_or_create_conversation(db, user, request.conversation_id)
+    state, _ = load_state(db, user.id, conversation.id)
+    session = bri_live.mint_session(state.to_prompt())
+    session["conversation_id"] = conversation.id
+    return session
+
+
+@router.post("/live/tool")
+def live_tool(request: LiveToolRequest, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user),
+              authorization: Optional[str] = Header(default=None)):
+    if not bri_config.live_enabled():
+        raise HTTPException(status_code=404, detail="Live mode is not enabled")
+    _owned_conversation(db, user, request.conversation_id)
+    _enforce_rate_limit(user)
+    agent = BriAgentV2(db, user, user_token=_extract_bearer_token(authorization))
+    outcome = agent.execute_live_tool(request.name, request.args, request.transcript, request.conversation_id)
+    return {k: outcome.get(k) for k in ("status", "result", "error", "action", "message")}
+
+
+@router.post("/live/turn")
+def live_turn(request: LiveTurnRequest, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    """Persists voice transcripts into the same conversation, so switching back
+    to text chat (or falling back mid-conversation) keeps full continuity."""
+    conversation = _owned_conversation(db, user, request.conversation_id)
+    db.add(agent_models.AgentMessage(conversation_id=conversation.id, role=request.role, content=request.content))
+    db.commit()
+    if request.role == "model":
+        # Keep follow-up state in sync with what Bri *said* aloud ("Want me to...?").
+        from ..services.bri_v2 import followup
+        from ..services.bri_v2.state import now, save_state
+        state, row = load_state(db, user.id, conversation.id)
+        offer = followup.extract_offer(request.content)
+        options = followup.extract_choice(request.content)
+        state.pending_offer = {"text": offer, "at": now()} if offer else None
+        state.pending_choice = {"options": options, "question": followup.extract_question(request.content), "at": now()} if options else None
+        save_state(db, user.id, conversation.id, state, row)
+    return {"ok": True}
+
+
+class ToolDeclineRequest(BaseModel):
+    conversation_id: int
+
+
+@router.post("/tool/decline")
+def decline_tool(request: ToolDeclineRequest, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    """The user said no to a proposed action (button or voice). Clears Bri's
+    server-side pending action and records the rejection, so a later "yes"
+    can never execute it and Bri doesn't re-push the same thing."""
+    from ..services.bri_v2.state import save_state
+    _owned_conversation(db, user, request.conversation_id)
+    state, row = load_state(db, user.id, request.conversation_id)
+    if state.pending_action:
+        state.add_rejected(state.pending_action["tool_name"])
+        db.add(agent_models.InterventionOutcome(user_id=user.id, module="general",
+                                                tool_name=state.pending_action["tool_name"], outcome_type="dismissed"))
+        state.pending_action = None
+        save_state(db, user.id, request.conversation_id, state, row)
+    return {"ok": True}
