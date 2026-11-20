@@ -1,7 +1,7 @@
 # NeuroBridge — Next Actions
 
 ## You
-Follow **`docs/USER_ACTION_REQUIRED.md`** (step-by-step, prioritized). Check progress any time with `backend\venv\Scripts\python.exe -m backend.scripts.verify_google`.
+Follow **`docs/USER_CLOUD_DEPLOYMENT_GUIDE.md`** (step-by-step, prioritized). Check progress any time with `backend\venv\Scripts\python.exe -m backend.scripts.verify_google`.
 
 ## Verification checklist (flip scorecard rows to VERIFIED)
 - Sign in with Google → `/api/google/status` → POST `/api/google/selftest` (Gemini + embedding live).
