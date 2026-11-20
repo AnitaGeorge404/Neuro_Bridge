@@ -281,7 +281,7 @@ export default function AdaptiveAnxietyEngine() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6 py-4 sm:py-8">
+    <div className="max-w-2xl mx-auto space-y-5 py-2 sm:space-y-6 sm:py-8">
       {/* ── Evaluator Demo Drawer (Collapsible / Non-Intrusive) ── */}
       <div className="border border-[#C7D2FE] rounded-2xl p-3 bg-[#F0F4FF]/60">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -296,7 +296,7 @@ export default function AdaptiveAnxietyEngine() {
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 shrink-0 text-xs gap-1 text-[#6B7BA8] hover:text-[#4F6BF6]"
+            className="min-h-[44px] shrink-0 text-xs gap-1 text-[#6B7BA8] hover:text-[#4F6BF6]"
             onClick={() => setShowEvaluatorDrawer(!showEvaluatorDrawer)}
           >
             {showEvaluatorDrawer ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -313,7 +313,7 @@ export default function AdaptiveAnxietyEngine() {
                   key={runner.id}
                   variant={activeDemoScenario?.scenarioId === runner.id ? "default" : "outline"}
                   size="sm"
-                  className={`h-7 text-xs px-2.5 rounded-lg ${
+                  className={`min-h-[40px] text-xs px-2.5 rounded-lg ${
                     activeDemoScenario?.scenarioId === runner.id
                       ? "bg-[#4F6BF6] text-white"
                       : "border-[#C7D2FE] text-[#6B7BA8] hover:border-[#4F6BF6] hover:text-[#4F6BF6]"
@@ -327,7 +327,7 @@ export default function AdaptiveAnxietyEngine() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs px-2 text-[#6B7BA8] hover:text-[#4F6BF6]"
+                  className="min-h-[40px] text-xs px-2 text-[#6B7BA8] hover:text-[#4F6BF6]"
                   onClick={handleResetToLiveContext}
                 >
                   <RotateCcw size={12} className="mr-1" /> Reset to Live
@@ -458,7 +458,7 @@ export default function AdaptiveAnxietyEngine() {
         <div className="space-y-4">
           {/* Level 0: Baseline / Calm Status */}
           {reasoningResult.responseTier === 0 || isDismissed ? (
-            <Card className="border-[#C7D2FE] shadow-[4px_4px_0_#DDE8FC] text-center p-8 space-y-6 rounded-2xl bg-white">
+            <Card className="border-[#C7D2FE] shadow-[4px_4px_0_#DDE8FC] text-center p-5 space-y-5 rounded-2xl bg-white sm:p-8 sm:space-y-6">
               <div className="flex justify-center">
                 <CompanionSticker variant="calm-cloud" mood="calm" size={64} />
               </div>
@@ -473,7 +473,7 @@ export default function AdaptiveAnxietyEngine() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs text-[#6B7BA8] hover:text-[#4F6BF6] rounded-xl border-[#C7D2FE] hover:border-[#4F6BF6]"
+                  className="min-h-[44px] text-xs text-[#6B7BA8] hover:text-[#4F6BF6] rounded-xl border-[#C7D2FE] hover:border-[#4F6BF6]"
                   onClick={() => handleStartIntervention(InterventionId.PHYSIOLOGICAL_BREATHING)}
                 >
                   I'd like a quick 1-minute reset
@@ -482,7 +482,7 @@ export default function AdaptiveAnxietyEngine() {
             </Card>
           ) : reasoningResult.needsClarification ? (
             /* Ambiguous Friction -> 1-Tap Semantic Clarification */
-            <Card className="border-[#C7D2FE] shadow-[6px_6px_0_#DDE8FC] p-6 space-y-5 rounded-2xl bg-white">
+            <Card className="border-[#C7D2FE] shadow-[6px_6px_0_#DDE8FC] p-4 space-y-5 rounded-2xl bg-white sm:p-6">
               <div className="flex items-center gap-3">
                 <CompanionSticker variant="concern" mood="concern" size={40} animate={false} />
                 <div>
@@ -549,7 +549,7 @@ export default function AdaptiveAnxietyEngine() {
             </Card>
           ) : (
             /* Level 1/2/3 Contextual Prompt Card */
-            <Card className="border-[#C7D2FE] shadow-[6px_6px_0_#DDE8FC] p-6 space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300 rounded-2xl bg-white">
+            <Card className="border-[#C7D2FE] shadow-[6px_6px_0_#DDE8FC] p-4 space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300 rounded-2xl bg-white sm:p-6">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <CompanionSticker

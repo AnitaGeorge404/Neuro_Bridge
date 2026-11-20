@@ -57,7 +57,7 @@ function SegmentedControl({ value, onChange, options, icon: Icon, label }) {
             type="button"
             onClick={() => onChange(opt.value)}
             aria-pressed={value === opt.value}
-            className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+            className={`min-h-[44px] flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
               value === opt.value
                 ? "bg-card text-primary shadow-sm"
                 : "text-muted-foreground hover:text-primary"
@@ -138,7 +138,7 @@ export default function SensorySettings({ moduleKey = "global", className = "" }
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls={panelId}
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
+        className="flex min-h-[52px] w-full items-center justify-between px-4 py-3 text-left"
       >
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -175,7 +175,7 @@ export default function SensorySettings({ moduleKey = "global", className = "" }
                       type="button"
                       onClick={() => applyPreset(preset.id)}
                       aria-pressed={activePresetId === preset.id}
-                      className={`rounded-xl border p-3 text-left transition-all ${
+                      className={`min-h-[72px] rounded-xl border p-3 text-left transition-all ${
                         activePresetId === preset.id
                           ? "border-primary bg-primary/5 shadow-sm"
                           : "border-border bg-card hover:bg-secondary"
@@ -192,7 +192,7 @@ export default function SensorySettings({ moduleKey = "global", className = "" }
                 type="button"
                 onClick={() => setShowAdvanced((v) => !v)}
                 aria-expanded={showAdvanced}
-                className="text-[11px] font-semibold text-primary hover:underline"
+                className="min-h-[44px] px-2 text-[11px] font-semibold text-primary hover:underline"
               >
                 {showAdvanced ? "Hide advanced controls" : "Show advanced controls"}
               </button>

@@ -148,9 +148,18 @@ html[data-adhd-reduced-motion="true"] [data-support-theme="adhd_focus"] .support
 @media (max-width: 500px) { .mood-options { gap: 1px; }.mood-options button { min-width: 0; padding-inline: 3px; }.momentum-section-heading { display: block; }.momentum-section-heading > p { text-align: left; }.tool-art { transform: scale(.8); transform-origin: bottom right; } }
 
 [data-support-theme]:not([data-support-theme="neutral"]) .support-tool-page .primaryButton,
-[data-support-theme]:not([data-support-theme="neutral"]) .support-tool-page button[class*="bg-gradient"]:not([class*="red-"]) {
+[data-support-theme]:not([data-support-theme="neutral"]) .support-tool-page button[class*="bg-gradient"]:not([class*="red-"]):not(.anxiety-intervention-card) {
   background: var(--tool-primary) !important;
   color: #FFFFFF !important;
+}
+
+/* These are full-card intervention buttons, not primary CTAs. Keep their
+   individual calming gradients when the generic button normalization runs. */
+[data-support-theme="anxiety_calm"] .support-tool-page .anxiety-intervention-card {
+  background-color: #FFFFFF;
+}
+.dark [data-support-theme="anxiety_calm"] .support-tool-page .anxiety-intervention-card {
+  background-color: #182341;
 }
 
 [data-support-theme]:not([data-support-theme="neutral"]) .support-tool-page .support-tool-muted {
