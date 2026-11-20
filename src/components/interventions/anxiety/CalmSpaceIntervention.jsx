@@ -89,7 +89,7 @@ export default function CalmSpaceIntervention({ onComplete, onCancel }) {
   };
 
   return (
-    <div className="rounded-2xl bg-gradient-to-b from-[#F0F4FF] via-white to-[#E8EDFA] border border-[#C7D2FE] p-6 sm:p-8 space-y-6 text-center shadow-[6px_6px_0_#DDE8FC]">
+    <div className="rounded-2xl bg-gradient-to-b from-[#F0F4FF] via-white to-[#E8EDFA] border border-[#C7D2FE] p-4 space-y-5 text-center shadow-[6px_6px_0_#DDE8FC] sm:p-8 sm:space-y-6">
       {/* Reassurance Header */}
       <div className="space-y-2 max-w-md mx-auto">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#DDE8FC] text-[#4F6BF6] text-xs font-semibold">
@@ -117,7 +117,7 @@ export default function CalmSpaceIntervention({ onComplete, onCancel }) {
           <button
             type="button"
             onClick={() => setSoftSound(!softSound)}
-            className={`px-3 py-1.5 rounded-xl border text-xs flex items-center gap-1.5 transition-colors ${
+            className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs flex items-center gap-1.5 transition-colors ${
               softSound
                 ? "bg-[#DDE8FC] border-[#4F6BF6] text-[#4F6BF6] font-bold"
                 : "bg-white border-[#C7D2FE] text-[#6B7BA8] hover:text-[#1E2A5E]"

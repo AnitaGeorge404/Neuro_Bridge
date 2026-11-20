@@ -196,36 +196,36 @@ export default function AppLayout({ children }) {
       {/* Reserves the fixed sidebar's width on desktop so content isn't hidden under it */}
       <div className="flex flex-col flex-1 min-w-0 md:ml-64">
         {/* ── Mobile top bar ─────────────────────── */}
-        <header className="md:hidden flex items-center justify-between border-b border-border bg-card px-4 py-3 sticky top-0 z-40">
+        <header className="md:hidden flex min-h-[56px] items-center justify-between border-b border-border bg-card px-3 py-2 sticky top-0 z-40">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setMobileNavOpen(true)}
               aria-label="Open navigation menu"
-              className="neuro-btn-ghost -ml-2 py-2 px-2 min-h-0"
+              className="neuro-btn-ghost -ml-2 h-11 min-h-[44px] w-11 px-2 py-2"
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
             <Brain className="w-6 h-6 text-primary" aria-hidden="true" />
-            <span className="font-bold text-lg">NeuroBridge</span>
+            <span className="hidden font-bold text-lg min-[361px]:inline">NeuroBridge</span>
           </div>
           <nav aria-label="Account" className="flex items-center gap-1 sm:gap-2">
             {role === "user" && (
-              <Link to="/settings" aria-label="Settings" className="neuro-btn-ghost text-sm py-2 px-3 min-h-0 gap-1">
+              <Link to="/settings" aria-label="Settings" className="neuro-btn-ghost h-11 min-h-[44px] min-w-[44px] px-3 py-2 text-sm gap-1">
                 <Settings className="w-4 h-4" aria-hidden="true" />
               </Link>
             )}
             {isAuthenticated ? (
-              <button onClick={handleLogout} aria-label="Sign out" className="neuro-btn-ghost text-sm py-2 px-3 min-h-0 gap-1">
+              <button onClick={handleLogout} aria-label="Sign out" className="neuro-btn-ghost h-11 min-h-[44px] min-w-[44px] px-3 py-2 text-sm gap-1">
                 <LogOut className="w-4 h-4" aria-hidden="true" />
               </button>
             ) : (
-              <Link to="/login" aria-label="Sign in" className="neuro-btn-ghost text-sm py-2 px-3 min-h-0 gap-1">
+              <Link to="/login" aria-label="Sign in" className="neuro-btn-ghost h-11 min-h-[44px] min-w-[44px] px-3 py-2 text-sm gap-1">
                 <User className="w-4 h-4" aria-hidden="true" />
               </Link>
             )}
             {role === "user" && (
-              <Link to="/" className="neuro-btn-ghost text-sm py-2 px-3 min-h-0 gap-1">
+              <Link to="/" className="neuro-btn-ghost h-11 min-h-[44px] min-w-[44px] px-3 py-2 text-sm gap-1">
                 <ArrowLeftRight className="w-4 h-4" aria-hidden="true" /> <span className="hidden sm:inline">Modes</span>
               </Link>
             )}

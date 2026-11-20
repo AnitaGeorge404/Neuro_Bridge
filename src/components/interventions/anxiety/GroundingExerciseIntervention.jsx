@@ -119,7 +119,7 @@ export default function GroundingExerciseIntervention({ onComplete, onCancel }) 
   }
 
   return (
-    <div className="rounded-2xl bg-white border border-[#C7D2FE] p-6 sm:p-8 space-y-6 shadow-[6px_6px_0_#DDE8FC]">
+    <div className="rounded-2xl bg-white border border-[#C7D2FE] p-4 space-y-5 shadow-[6px_6px_0_#DDE8FC] sm:p-8 sm:space-y-6">
       {/* Step Header & Progress */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -152,7 +152,7 @@ export default function GroundingExerciseIntervention({ onComplete, onCancel }) 
                 key={chip}
                 type="button"
                 onClick={() => toggleChip(chip)}
-                className={`p-3 rounded-xl border text-xs font-medium text-left transition-all flex items-center justify-between select-none ${
+                className={`min-h-[52px] p-3 rounded-xl border text-xs font-medium text-left transition-all flex items-center justify-between select-none ${
                   isSelected
                     ? "bg-[#DDE8FC] border-[#4F6BF6] text-[#1E2A5E] font-bold shadow-sm"
                     : "bg-[#F0F4FF]/50 border-[#C7D2FE] text-[#6B7BA8] hover:border-[#4F6BF6]"
@@ -178,7 +178,7 @@ export default function GroundingExerciseIntervention({ onComplete, onCancel }) 
         <button
           type="button"
           onClick={() => onCancel?.()}
-          className="text-xs text-[#6B7BA8] hover:text-[#1E2A5E] underline underline-offset-4"
+          className="min-h-[44px] px-3 text-xs text-[#6B7BA8] hover:text-[#1E2A5E] underline underline-offset-4"
         >
           Cancel
         </button>
