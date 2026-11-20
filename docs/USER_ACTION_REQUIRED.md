@@ -11,7 +11,8 @@ Today: `0/12 live checks passed` (4 FAIL because of the bad Gemini key, 8 SKIP w
 
 | # | Action | Priority | Time | Status |
 |---|---|---|---|---|
-| 1 | Get a working Gemini API key | 🔴 DO NOW | 5 min | ⬜ To do |
+| 1 | Get a working Gemini API key | 🔴 DO NOW | 5 min | ✅ Done 2026-11-20 (new key accepted by Google) |
+| 1b | Remove the old Gemini key saved in Windows | 🔴 DO NOW | 3 min | ⬜ To do |
 | 2 | Create a Google Cloud project + billing | 🟡 NEXT | 10 min | ⬜ To do |
 | 3 | Install Google Cloud tools + log in, run one setup script | 🟡 NEXT | 20 min | ⬜ To do |
 | 4 | Turn on Firebase + Google Sign-In | 🟡 NEXT | 10 min | ⬜ To do |
@@ -35,6 +36,20 @@ Today: `0/12 live checks passed` (4 FAIL because of the bad Gemini key, 8 SKIP w
 - **Variable:** `GEMINI_API_KEY`
 - **Success looks like:** run the check command above. The 4 Gemini lines say **PASS**.
 - **Tell me:** "Step 1 done" plus the check output.
+
+## 🔴 1b. Remove the old Gemini key saved in Windows
+
+- **Why:** an old, invalid `GEMINI_API_KEY` is saved in Windows itself, at both the user and machine level. Windows settings win over `.env`, so the app keeps using the dead key and ignores your new one.
+- **Steps:**
+  1. Click **Start**, type `PowerShell`, right-click **Windows PowerShell** → **Run as administrator** → **Yes**.
+  2. Paste this and press Enter:
+     ```powershell
+     [Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $null, 'Machine'); [Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $null, 'User')
+     ```
+  3. **Fully quit and reopen** the Claude app, VS Code and any terminals, so they forget the old value.
+- **Your new key in `.env` stays as it is. Don't change it.**
+- **Success looks like:** the check command shows the 4 Gemini lines as **PASS**.
+- **Tell me:** "Step 1b done".
 
 ---
 
