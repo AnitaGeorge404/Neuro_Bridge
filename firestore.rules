@@ -1,0 +1,11 @@
+rules_version = '2';
+// All Firestore access goes through the backend (firebase-admin, which bypasses rules
+// after verifying the user's ID token). Clients get read-only access to their own tree.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userDoc}/{document=**} {
+      allow read: if request.auth != null && userDoc == 'firebase:' + request.auth.uid;
+      allow write: if false;
+    }
+  }
+}

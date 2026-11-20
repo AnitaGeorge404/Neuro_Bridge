@@ -1,0 +1,41 @@
+import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
+import { ArrowLeft, ScanFace } from "lucide-react";
+import SupportToolThemeProvider from "@/theme/SupportToolThemeProvider";
+import SupportToolLayout from "@/components/support/SupportToolLayout";
+import EmotionDecoderCard from "@/components/asd/EmotionDecoderCard";
+import AsdVisualRoot from "@/components/asd/ui/AsdVisualRoot";
+import { useSensoryReducedMotion } from "@/hooks/useSensoryReducedMotion";
+
+export default function ASDEmotionPage() {
+  const { reduced, gentle } = useSensoryReducedMotion();
+  return (
+    <SupportToolThemeProvider theme="asd_social">
+      <AsdVisualRoot>
+        <SupportToolLayout
+        title="Emotion Decoder"
+        description="Read a real little situation and figure out what someone feels."
+      >
+        <motion.header
+          initial={{ opacity: 0, y: reduced ? 0 : 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: gentle ? 0.3 : 0.45, ease: "easeOut" }}
+          className="mb-5 flex flex-wrap items-center gap-3"
+        >
+          <Link
+            to="/asd"
+            className="inline-flex items-center gap-1.5 rounded-[10px] border-2 border-[#B2DFDB] bg-white px-3 py-2 text-sm font-bold text-[#5F8A87] shadow-[2px_2px_0_#D5F5EC] transition-colors hover:text-[#0D9488] hover:border-[#0D9488] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal-200"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to hub
+          </Link>
+          <span className="inline-flex items-center gap-2 text-sm font-black text-[#0D9488]">
+            <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[#E0F5EE]"><ScanFace size={16} /></span>
+            Look for the clues: words, voice, face and body.
+          </span>
+        </motion.header>
+        <EmotionDecoderCard />
+      </SupportToolLayout>
+      </AsdVisualRoot>
+    </SupportToolThemeProvider>
+  );
+}

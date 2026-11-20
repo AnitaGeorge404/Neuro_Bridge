@@ -1,0 +1,8 @@
+**
+!backend/
+backend/venv/
+backend/tests/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.db
+!backend/requirements.txt

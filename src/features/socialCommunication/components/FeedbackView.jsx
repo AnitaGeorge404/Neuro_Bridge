@@ -1,0 +1,86 @@
+import { CheckCircle2, Sparkles, Target } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { buildFeedback } from "../services/feedbackGenerator";
+import { AsdRewardStars } from "@/components/asd/ui";
+
+function scoreColor(score) {
+  if (score >= 80) return "bg-[#34D399]";
+  if (score >= 60) return "bg-[#14B8A6]";
+  return "bg-[#FBBF24]";
+}
+
+export default function FeedbackView({ engine }) {
+  const session = engine.session;
+  const evaluation = session?.evaluation;
+  if (!evaluation) return null;
+
+  const feedback = buildFeedback(evaluation);
+
+  return (
+    <div className="w-full space-y-5">
+      <div className="rounded-2xl bg-white border-2 border-[#B2DFDB] shadow-[3px_3px_0_#D5F5EC] p-4 sm:p-6 text-center">
+        <p className="text-xs font-bold uppercase tracking-wide text-[#3D6A66] mb-1">Overall</p>
+        <p className={`font-black text-[#0D9488] ${engine.a11y.largeText ? "text-5xl" : "text-4xl"}`}>
+          {evaluation.overallScore}
+          <span className="text-lg text-[#3D6A66] font-semibold">/100</span>
+        </p>
+        <p className="text-sm text-[#3D6A66] mt-2">{feedback.summary}</p>
+        {evaluation.overallScore >= 70 && <div className="mt-2"><AsdRewardStars earned={3} label="Conversation score" /></div>}
+        <p className="text-[11px] text-[#3D6A66] mt-2">
+          {session?.turnCount} exchanges · {evaluation.stats?.voiceTurns ?? 0} spoken ·{" "}
+          {evaluation.stats?.textTurns ?? 0} typed
+        </p>
+      </div>
+
+      <div className="rounded-2xl bg-white border border-[#B2DFDB] p-4 sm:p-6 space-y-4">
+        <h3 className={`font-bold text-[#134E4A] ${engine.a11y.largeText ? "text-xl" : ""}`}>How it went</h3>
+        {evaluation.dimensions.map((dimension) => (
+          <div key={dimension.id}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm text-[#3D6A66]">{dimension.label}</span>
+              <span className="text-sm font-semibold text-slate-500">{dimension.score}</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-[#E6F7F2]">
+              <div
+                className={`h-full rounded-full ${scoreColor(dimension.score)}`}
+                style={{ width: `${dimension.score}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {feedback.sections.map((section) => (
+        <div key={section.id} className="rounded-2xl bg-white border border-[#B2DFDB] p-4 sm:p-6">
+          <h3 className={`font-bold text-[#134E4A] mb-3 flex items-center gap-2 ${engine.a11y.largeText ? "text-xl" : ""}`}>
+            {section.id === "what_worked" ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+            ) : section.id === "alternatives" ? (
+              <Target className="w-5 h-5 text-[#0891B2]" />
+            ) : (
+              <Sparkles className="w-5 h-5 text-amber-500" />
+            )}
+            {section.title}
+          </h3>
+          <ul className="space-y-2">
+            {section.items.map((item, index) => (
+              <li key={`${section.id}-${index}`} className="text-sm text-[#3D6A66] flex items-start gap-2">
+                <span className="mt-1.5 block h-1.5 w-1.5 rounded-full bg-[#14B8A6] shrink-0" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Button className="flex-1" size="lg" onClick={engine.finishActivity}>
+          See your summary
+        </Button>
+        <Button variant="outline" size="lg" onClick={engine.startNew}>
+          Practice again
+        </Button>
+      </div>
+    </div>
+  );
+}

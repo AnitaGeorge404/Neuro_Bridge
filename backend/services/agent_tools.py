@@ -1,0 +1,1300 @@
+"""
+The agent's tool registry.
+
+Every capability the agent can actually invoke is declared here as a `Tool`:
+a name, a description (fed to Gemini), a JSON-schema parameter spec (fed to
+Gemini as a function declaration), a risk level that drives the confirmation
+policy, and a handler that does the real, ownership-checked database work.
+
+This is the single source of truth — the Gemini tool declarations are
+generated from this registry (see `build_gemini_tool_declarations`), so the
+prompt and the actual executable surface can never drift apart.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Optional
+
+import httpx
+from sqlalchemy.orm import Session
+
+from ..auth import CurrentUser
+from . import google_ai_service
+from ..models import adhd_models, agent_models, anxiety_models, asd_models, ocd_models
+from . import ai_service
+from .navigation import FEATURE_ROUTES, resolve_feature_route
+
+
+class RiskLevel(str, Enum):
+    READ = "read"  # always executes immediately
+    WRITE_LOW = "write_low"  # executes immediately (low-stakes / reversible / continuation of an in-flight flow)
+    WRITE_CONFIRM = "write_confirm"  # backend proposes; requires an explicit user confirmation to actually run
+
+
+@dataclass
+class ToolContext:
+    db: Session
+    user: CurrentUser
+    user_token: Optional[str] = None  # raw bearer token, only forwarded to tools that need it (e.g. dyslexia)
+    genai_model: Any = None  # lazily-supplied Gemini model handle for tools that need a sub-generation
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    parameters: dict
+    risk_level: RiskLevel
+    handler: Callable[[dict, ToolContext], dict]
+    # Only declared to Gemini by Bri V2 (which enforces extra policy, e.g. the
+    # explicit-request gate on memory writes). V1's declarations exclude these.
+    v2_only: bool = False
+
+
+class ToolError(Exception):
+    """Raised by a handler for a user-facing, non-fatal failure (e.g. not found)."""
+
+
+class ToolTimeoutError(Exception):
+    """Raised when a tool handler exceeds AGENT_TOOL_TIMEOUT_MS."""
+
+
+# ---------------------------------------------------------------------------
+# OCD tools — backed by the real ocd_models tables
+# ---------------------------------------------------------------------------
+
+def _get_ocd_progress(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    hierarchies = db.query(ocd_models.ExposureHierarchy).filter_by(owner_id=user.id).all()
+    sessions = (
+        db.query(ocd_models.ERPSession)
+        .filter_by(owner_id=user.id, status="completed")
+        .order_by(ocd_models.ERPSession.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    total_tasks = sum(len(h.tasks) for h in hierarchies)
+    completed_tasks = sum(1 for h in hierarchies for t in h.tasks if t.is_completed)
+    suds_drops = [s.pre_suds - s.post_suds for s in sessions if s.post_suds is not None]
+    avg_drop = round(sum(suds_drops) / len(suds_drops), 1) if suds_drops else None
+    resisted_count = sum(1 for s in sessions if s.resisted_compulsion)
+
+    return {
+        "hierarchy_count": len(hierarchies),
+        "total_exposure_tasks": total_tasks,
+        "completed_exposure_tasks": completed_tasks,
+        "completed_erp_sessions": len(sessions),
+        "average_suds_reduction": avg_drop,
+        "sessions_with_resisted_compulsion": resisted_count,
+        "most_recent_session_at": sessions[0].created_at.isoformat() if sessions else None,
+    }
+
+
+def _get_exposure_hierarchy(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    title = (args.get("hierarchy_title") or "").strip()
+    query = db.query(ocd_models.ExposureHierarchy).filter_by(owner_id=user.id)
+    hierarchy = (
+        query.filter(ocd_models.ExposureHierarchy.title.ilike(f"%{title}%")).first()
+        if title
+        else query.order_by(ocd_models.ExposureHierarchy.created_at.desc()).first()
+    )
+    if not hierarchy:
+        raise ToolError("No exposure hierarchy found. You may need to create one first.")
+
+    tasks = sorted(hierarchy.tasks, key=lambda t: t.order_index)
+    return {
+        "id": hierarchy.id,
+        "title": hierarchy.title,
+        "category": hierarchy.category,
+        "tasks": [
+            {"id": t.id, "description": t.description, "estimated_suds": t.estimated_suds, "is_completed": t.is_completed}
+            for t in tasks
+        ],
+    }
+
+
+def _get_owned_exposure_task(db, task_id: int, user: CurrentUser) -> ocd_models.ExposureTask:
+    """Same ownership check as ocd_router.py's _get_owned_task (join through
+    the hierarchy, not a bare task_id lookup) — the agent must not be able to
+    touch another user's exposure task just because it can guess/receive an id."""
+    task = (
+        db.query(ocd_models.ExposureTask)
+        .join(ocd_models.ExposureHierarchy)
+        .filter(
+            ocd_models.ExposureTask.id == task_id,
+            ocd_models.ExposureHierarchy.owner_id == user.id,
+        )
+        .first()
+    )
+    if not task:
+        raise ToolError("That exposure step wasn't found.")
+    return task
+
+
+def _reorder_exposure_task(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    task_id = args.get("task_id")
+    new_order_index = args.get("new_order_index")
+    if task_id is None or new_order_index is None:
+        raise ToolError("I need both which exposure step and its new position to reorder it.")
+    task = _get_owned_exposure_task(db, task_id, user)
+    task.order_index = max(0, int(new_order_index))
+    db.commit()
+    db.refresh(task)
+    return {"id": task.id, "description": task.description, "order_index": task.order_index, "hierarchy_id": task.hierarchy_id}
+
+
+def _delete_exposure_task(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    task_id = args.get("task_id")
+    if task_id is None:
+        raise ToolError("Which exposure step should I remove?")
+    task = _get_owned_exposure_task(db, task_id, user)
+    description = task.description
+    db.delete(task)
+    db.commit()
+    return {"deleted_task_id": task_id, "description": description}
+
+
+def _create_exposure(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    description = (args.get("description") or "").strip()
+    category = (args.get("category") or "general").strip()
+    estimated_suds = int(args.get("estimated_suds") or 50)
+    hierarchy_title = (args.get("hierarchy_title") or category.title()).strip()
+
+    if not description:
+        raise ToolError("An exposure description is required.")
+
+    hierarchy = (
+        db.query(ocd_models.ExposureHierarchy)
+        .filter_by(owner_id=user.id)
+        .filter(ocd_models.ExposureHierarchy.title.ilike(hierarchy_title))
+        .first()
+    )
+    if not hierarchy:
+        hierarchy = ocd_models.ExposureHierarchy(title=hierarchy_title, category=category, owner_id=user.id)
+        db.add(hierarchy)
+        db.flush()
+
+    next_index = len(hierarchy.tasks)
+    task = ocd_models.ExposureTask(
+        description=description,
+        estimated_suds=estimated_suds,
+        order_index=next_index,
+        hierarchy_id=hierarchy.id,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    return {
+        "hierarchy_id": hierarchy.id,
+        "hierarchy_title": hierarchy.title,
+        "task_id": task.id,
+        "description": task.description,
+        "estimated_suds": task.estimated_suds,
+    }
+
+
+def _start_erp_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    description = (args.get("exposure_description") or "").strip()
+    pre_suds = args.get("pre_suds")
+    if not description or pre_suds is None:
+        raise ToolError("An exposure description and a starting SUDS (0-100) are required.")
+
+    session = ocd_models.ERPSession(
+        title=description,
+        pre_suds=int(pre_suds),
+        status="in_progress",
+        owner_id=user.id,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return {"session_id": session.id, "title": session.title, "pre_suds": session.pre_suds, "status": session.status}
+
+
+def _record_suds(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session_id = args.get("session_id")
+    value = args.get("value")
+    if value is None:
+        raise ToolError("A SUDS value (0-100) is required.")
+
+    if session_id is not None:
+        session = db.query(ocd_models.ERPSession).filter_by(id=session_id, owner_id=user.id).first()
+        if not session:
+            raise ToolError("That ERP session wasn't found.")
+
+    log = ocd_models.SUDSLog(
+        value=int(value),
+        context_tag=args.get("context_tag"),
+        session_id=session_id,
+        owner_id=user.id,
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {"log_id": log.id, "value": log.value, "session_id": log.session_id}
+
+
+def _complete_erp_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session_id = args.get("session_id")
+    session = db.query(ocd_models.ERPSession).filter_by(id=session_id, owner_id=user.id).first()
+    if not session:
+        raise ToolError("That ERP session wasn't found.")
+
+    post_suds = args.get("post_suds")
+    if post_suds is None:
+        raise ToolError("An ending SUDS value (0-100) is required to complete the session.")
+
+    session.post_suds = int(post_suds)
+    session.resisted_compulsion = bool(args.get("resisted_compulsion", False))
+    session.notes = args.get("notes")
+    session.status = "completed"
+    session.completed_at = datetime.utcnow()
+    session.duration_seconds = int((session.completed_at - session.created_at).total_seconds())
+    session.ai_summary = ai_service.summarize_erp_session(
+        session.pre_suds, session.post_suds, session.duration_seconds, session.resisted_compulsion, session.notes or ""
+    )
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "session_id": session.id,
+        "pre_suds": session.pre_suds,
+        "post_suds": session.post_suds,
+        "resisted_compulsion": session.resisted_compulsion,
+        "ai_summary": session.ai_summary,
+    }
+
+
+# ---------------------------------------------------------------------------
+# ADHD tools — backed by adhd_models
+# ---------------------------------------------------------------------------
+
+def _get_recent_tasks(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    breakdowns = (
+        db.query(adhd_models.TaskBreakdown)
+        .filter_by(user_id=user.id)
+        .order_by(adhd_models.TaskBreakdown.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    sessions = (
+        db.query(adhd_models.FocusSession)
+        .filter_by(user_id=user.id)
+        .order_by(adhd_models.FocusSession.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    return {
+        "recent_task_breakdowns": [
+            {"id": b.id, "original_task": b.original_task, "step_count": len(b.steps)} for b in breakdowns
+        ],
+        "recent_focus_sessions": [
+            {"id": s.id, "intent": s.intent, "duration_minutes": s.duration_minutes, "status": s.status}
+            for s in sessions
+        ],
+    }
+
+
+def _create_task_breakdown(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    task = (args.get("task") or "").strip()
+    if not task:
+        raise ToolError("A task description is required.")
+
+    steps_data = None
+    if ctx.genai_model is not None:
+        prompt = (
+            "Break down the following task into 3-5 small, manageable steps for someone with ADHD. "
+            "Return ONLY a JSON array of objects with 'description' and 'estimated_minutes'. "
+            f"Task: {task}"
+        )
+        try:
+            response = ctx.genai_model.generate_content(prompt)
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:-3]
+            elif text.startswith("```"):
+                text = text[3:-3]
+            steps_data = json.loads(text)
+        except Exception:
+            steps_data = None
+    elif google_ai_service.is_configured():
+        # Gemini structured output (response_schema) — no fragile JSON-from-markdown parsing.
+        plan = google_ai_service.generate_structured(
+            f"Task: {task}",
+            response_schema=google_ai_service.TaskBreakdownPlan,
+            system_instruction=(
+                "You help neurodivergent people start tasks. Break the task into 3-5 concrete, "
+                "physically doable steps. The first step must take 5 minutes or less. No pep talk."
+            ),
+        )
+        if plan and plan.steps:
+            steps_data = [s.model_dump() for s in plan.steps[:6]]
+
+    if not steps_data:
+        steps_data = [{"description": "Start with the smallest possible first step", "estimated_minutes": 5}]
+
+    breakdown = adhd_models.TaskBreakdown(user_id=user.id, original_task=task)
+    db.add(breakdown)
+    db.flush()
+
+    saved_steps = []
+    for step in steps_data:
+        db_step = adhd_models.TaskStep(
+            breakdown_id=breakdown.id,
+            description=step.get("description", "Step"),
+            estimated_minutes=int(step.get("estimated_minutes", 5)),
+        )
+        db.add(db_step)
+        saved_steps.append(db_step)
+    db.commit()
+
+    return {
+        "id": breakdown.id,
+        "original_task": breakdown.original_task,
+        "steps": [
+            {"id": s.id, "description": s.description, "estimated_minutes": s.estimated_minutes, "is_completed": False}
+            for s in saved_steps
+        ],
+    }
+
+
+def _serialize_breakdown(breakdown) -> dict:
+    steps = sorted(breakdown.steps, key=lambda s: s.id)  # insertion order == step order; no separate index column
+    return {
+        "id": breakdown.id,
+        "original_task": breakdown.original_task,
+        "steps": [
+            {"id": s.id, "description": s.description, "estimated_minutes": s.estimated_minutes, "is_completed": s.is_completed}
+            for s in steps
+        ],
+    }
+
+
+def _most_recent_breakdown(db, user_id: str):
+    return (
+        db.query(adhd_models.TaskBreakdown)
+        .filter_by(user_id=user_id)
+        .order_by(adhd_models.TaskBreakdown.created_at.desc())
+        .first()
+    )
+
+
+def _get_task_breakdown(args: dict, ctx: ToolContext) -> dict:
+    """Real per-step detail (description + estimated_minutes) for the user's
+    most recent task breakdown — get_recent_tasks only returns a step COUNT,
+    not enough for the agent to reason about "the first one" without this."""
+    db, user = ctx.db, ctx.user
+    breakdown = _most_recent_breakdown(db, user.id)
+    if not breakdown:
+        raise ToolError("You don't have a task breakdown yet. Want me to create one?")
+    return _serialize_breakdown(breakdown)
+
+
+def _update_task_step(args: dict, ctx: ToolContext) -> dict:
+    """Edits one step (by its position, 0-based, in the user's most recent
+    breakdown) — e.g. "make the first one smaller" after the agent has
+    actually observed the current steps via get_task_breakdown. Low-stakes
+    and easily reversible (unlike creating/completing a record), so it
+    executes immediately rather than requiring confirmation."""
+    db, user = ctx.db, ctx.user
+    step_index = args.get("step_index")
+    if step_index is None:
+        raise ToolError("Which step should be changed? (I need its position, e.g. the first one.)")
+
+    breakdown = _most_recent_breakdown(db, user.id)
+    if not breakdown:
+        raise ToolError("You don't have a task breakdown yet.")
+
+    steps = sorted(breakdown.steps, key=lambda s: s.id)
+    if not (0 <= step_index < len(steps)):
+        raise ToolError(f"That breakdown only has {len(steps)} step(s).")
+
+    step = steps[step_index]
+    new_minutes = args.get("new_estimated_minutes")
+    new_description = args.get("new_description")
+    if new_minutes is None and not new_description:
+        raise ToolError("Tell me what to change about that step — a new size or a new description.")
+    if new_minutes is not None:
+        step.estimated_minutes = max(1, int(new_minutes))
+    if new_description:
+        step.description = new_description.strip()
+    db.commit()
+    db.refresh(breakdown)
+
+    return _serialize_breakdown(breakdown)
+
+
+def _complete_task_step(args: dict, ctx: ToolContext) -> dict:
+    """Marks one step of the user's most recent breakdown done. step_index is
+    0-based; omitted = the first not-yet-completed step ("I finished it")."""
+    db, user = ctx.db, ctx.user
+    breakdown = _most_recent_breakdown(db, user.id)
+    if not breakdown:
+        raise ToolError("You don't have a task breakdown yet.")
+    steps = sorted(breakdown.steps, key=lambda s: s.id)
+    step_index = args.get("step_index")
+    if step_index is None:
+        step_index = next((i for i, s in enumerate(steps) if not s.is_completed), None)
+        if step_index is None:
+            raise ToolError("Every step in that breakdown is already done.")
+    if not (0 <= int(step_index) < len(steps)):
+        raise ToolError(f"That breakdown only has {len(steps)} step(s).")
+    steps[int(step_index)].is_completed = True
+    db.commit()
+    db.refresh(breakdown)
+    result = _serialize_breakdown(breakdown)
+    result["completed_index"] = int(step_index)
+    return result
+
+
+# Whitelisted, user-controlled preference keys only — memory never stores
+# free text, diagnoses or inferred traits.
+USER_PREFERENCE_KEYS = {
+    "response_length": ("short", "medium", "detailed"),
+    "task_step_minutes": ("2", "5", "10", "15", "25"),
+    "support_style": ("gentle", "direct", "structured"),
+    "presentation": ("standard", "focus", "low_stimulation", "text_first"),
+    "voice_replies": ("on", "off"),
+}
+
+
+def _save_user_preference(args: dict, ctx: ToolContext) -> dict:
+    key = (args.get("key") or "").strip()
+    value = str(args.get("value") or "").strip().lower()
+    allowed = USER_PREFERENCE_KEYS.get(key)
+    if not allowed:
+        raise ToolError("I can only remember response length, step size, support style, presentation, or voice replies.")
+    if value not in allowed:
+        raise ToolError(f"For {key.replace('_', ' ')} I can remember one of: {', '.join(allowed)}.")
+    db = ctx.db
+    row = db.query(agent_models.AgentLearning).filter_by(user_id=ctx.user.id, key=key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(agent_models.AgentLearning(user_id=ctx.user.id, category="user_preference", key=key, value=value))
+    db.commit()
+    return {"key": key, "value": value}
+
+
+_FOCUS_ACTIVE_STATUSES = ("RUNNING", "PAUSED")
+
+
+def _serialize_focus_session(session) -> dict:
+    """remaining_seconds is derived from timestamps, not a stored countdown —
+    immune to drift from tab backgrounding, reconnects, or reload."""
+    now = datetime.utcnow()
+    elapsed_current_run = (now - session.started_at).total_seconds() if session.status == "RUNNING" and session.started_at else 0
+    active_seconds = (session.accumulated_seconds or 0) + elapsed_current_run
+    remaining_seconds = max(0, int((session.duration_minutes or 0) * 60 - active_seconds))
+    return {
+        "id": session.id,
+        "intent": session.intent,
+        "duration_minutes": session.duration_minutes,
+        "status": session.status,
+        "remaining_seconds": remaining_seconds,
+    }
+
+
+def _most_recent_active_focus_session(db, user_id: str):
+    return (
+        db.query(adhd_models.FocusSession)
+        .filter_by(user_id=user_id)
+        .filter(adhd_models.FocusSession.status.in_(_FOCUS_ACTIVE_STATUSES))
+        .order_by(adhd_models.FocusSession.created_at.desc())
+        .first()
+    )
+
+
+def _start_focus_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    duration_minutes = int(args.get("duration_minutes") or 25)
+    intent = args.get("intent")
+    now = datetime.utcnow()
+
+    session = adhd_models.FocusSession(
+        user_id=user.id, intent=intent, duration_minutes=duration_minutes,
+        status="RUNNING", started_at=now, accumulated_seconds=0,
+    )
+    db.add(session)
+    db.commit()
+
+    if duration_minutes:
+        db.add(
+            agent_models.AgentLearning(
+                user_id=user.id, category="focus_preference", key="preferred_duration", value=str(duration_minutes)
+            )
+        )
+        db.commit()
+
+    return _serialize_focus_session(session)
+
+
+def _get_active_focus_session(args: dict, ctx: ToolContext) -> dict:
+    session = _most_recent_active_focus_session(ctx.db, ctx.user.id)
+    if not session:
+        raise ToolError("There's no active focus session right now.")
+    return _serialize_focus_session(session)
+
+
+def _pause_focus_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session = _most_recent_active_focus_session(db, user.id)
+    if not session:
+        raise ToolError("There's no active focus session to pause.")
+    if session.status != "RUNNING":
+        raise ToolError(f"That session is already {session.status.lower()}, not running.")
+    now = datetime.utcnow()
+    elapsed = (now - session.started_at).total_seconds() if session.started_at else 0
+    session.accumulated_seconds = int((session.accumulated_seconds or 0) + elapsed)
+    session.status = "PAUSED"
+    session.paused_at = now
+    db.commit()
+    return _serialize_focus_session(session)
+
+
+def _resume_focus_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session = _most_recent_active_focus_session(db, user.id)
+    if not session:
+        raise ToolError("There's no paused focus session to resume.")
+    if session.status != "PAUSED":
+        raise ToolError(f"That session is {session.status.lower()}, not paused.")
+    session.status = "RUNNING"
+    session.started_at = datetime.utcnow()
+    session.paused_at = None
+    db.commit()
+    return _serialize_focus_session(session)
+
+
+def _stop_focus_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session = _most_recent_active_focus_session(db, user.id)
+    if not session:
+        raise ToolError("There's no active focus session to stop.")
+    now = datetime.utcnow()
+    if session.status == "RUNNING" and session.started_at:
+        session.accumulated_seconds = int((session.accumulated_seconds or 0) + (now - session.started_at).total_seconds())
+    session.status = "STOPPED"
+    session.ended_at = now
+    db.commit()
+    return _serialize_focus_session(session)
+
+
+def _update_focus_session(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    session = _most_recent_active_focus_session(db, user.id)
+    if not session:
+        raise ToolError("There's no active focus session to change.")
+    new_minutes = args.get("duration_minutes")
+    if new_minutes is None:
+        raise ToolError("What should the new duration be?")
+    session.duration_minutes = max(1, int(new_minutes))
+    db.commit()
+    return _serialize_focus_session(session)
+
+
+# ---------------------------------------------------------------------------
+# Anxiety tools — backed by anxiety_models
+# ---------------------------------------------------------------------------
+
+def _get_anxiety_history(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    sessions = (
+        db.query(anxiety_models.GroundingSession)
+        .filter_by(user_id=user.id)
+        .order_by(anxiety_models.GroundingSession.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    return {
+        "recent_grounding_sessions": [
+            {
+                "id": s.id,
+                "exercise_type": s.exercise_type,
+                "pre_anxiety": s.pre_anxiety,
+                "post_anxiety": s.post_anxiety,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in sessions
+        ]
+    }
+
+
+def _start_grounding_activity(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    anxiety_level = int(args.get("anxiety_level") or 5)
+    exercise = "5-4-3-2-1 Senses" if anxiety_level > 7 else "Box Breathing"
+
+    session = anxiety_models.GroundingSession(user_id=user.id, exercise_type=exercise, pre_anxiety=anxiety_level)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return {"id": session.id, "exercise_type": session.exercise_type}
+
+
+def _complete_grounding_activity(args: dict, ctx: ToolContext) -> dict:
+    """Records how a grounding exercise actually went — closes the loop that
+    start_grounding_activity left open (post_anxiety existed in the model but
+    nothing, anywhere in the app, ever wrote to it). Deliberately plain and
+    factual: no "great job!"/completion-percentage framing, consistent with
+    the same reassurance-avoidance principle applied to OCD copy."""
+    db, user = ctx.db, ctx.user
+    session_id = args.get("session_id")
+    post_anxiety = args.get("post_anxiety")
+    if post_anxiety is None:
+        raise ToolError("What's the anxiety level now (0-10)?")
+
+    session = db.query(anxiety_models.GroundingSession).filter_by(id=session_id, user_id=user.id).first() if session_id else (
+        db.query(anxiety_models.GroundingSession).filter_by(user_id=user.id).order_by(anxiety_models.GroundingSession.created_at.desc()).first()
+    )
+    if not session:
+        raise ToolError("I couldn't find that grounding session.")
+
+    session.post_anxiety = int(post_anxiety)
+    db.commit()
+
+    return {"id": session.id, "exercise_type": session.exercise_type, "pre_anxiety": session.pre_anxiety, "post_anxiety": session.post_anxiety}
+
+
+# ---------------------------------------------------------------------------
+# Dyslexia — the one module that's genuinely Supabase-backed. We forward the
+# user's own JWT to Supabase's REST API so existing RLS policies enforce
+# ownership; the backend never needs a service-role key for this.
+# ---------------------------------------------------------------------------
+
+def _get_reading_preferences(args: dict, ctx: ToolContext) -> dict:
+    import os
+
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    anon_key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not supabase_url or not anon_key or not ctx.user_token:
+        return {"available": False, "reason": "Reading preferences aren't available right now."}
+
+    try:
+        response = httpx.get(
+            f"{supabase_url}/rest/v1/reader_preferences",
+            headers={
+                "Authorization": f"Bearer {ctx.user_token}",
+                "apikey": anon_key,
+            },
+            params={"select": "*", "limit": "1"},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+    except Exception:
+        return {"available": False, "reason": "Couldn't reach reading preferences right now."}
+
+    if not rows:
+        return {"available": True, "has_preferences": False}
+
+    return {"available": True, "has_preferences": True, "preferences": rows[0]}
+
+
+def _get_reading_history(args: dict, ctx: ToolContext) -> dict:
+    """Real, Supabase-backed reading files (src/lib/readingFilesService.js) —
+    a genuine gap found by audit: nothing exposed this before. Deliberately
+    returns only lightweight progress metadata, never the full OCR'd text
+    (that's the reader's job, not something to surface through chat)."""
+    import os
+
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    anon_key = os.getenv("SUPABASE_ANON_KEY", "")
+    if not supabase_url or not anon_key or not ctx.user_token:
+        return {"available": False, "reason": "Reading history isn't available right now."}
+
+    try:
+        response = httpx.get(
+            f"{supabase_url}/rest/v1/reading_files",
+            headers={"Authorization": f"Bearer {ctx.user_token}", "apikey": anon_key},
+            params={"select": "file_name,file_type,page_count,ocr_status,metadata,created_at", "order": "created_at.desc", "limit": "5"},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        rows = response.json()
+    except Exception:
+        return {"available": False, "reason": "Couldn't reach your reading history right now."}
+
+    return {
+        "available": True,
+        "recent_files": [
+            {
+                "file_name": r.get("file_name"),
+                "page_count": r.get("page_count"),
+                "status": r.get("ocr_status"),
+                "progress": (r.get("metadata") or {}).get("progress"),
+            }
+            for r in rows
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# ASD — start_social_scenario remains honest, navigation-only (no backend
+# data store for that specific feature). Routine/schedule support below IS
+# real, backend-persisted state — predictability and step-by-step structure
+# are the actual research-grounded ASD need, not a stereotype.
+# ---------------------------------------------------------------------------
+
+def _start_social_scenario(args: dict, ctx: ToolContext) -> dict:
+    return {"path": FEATURE_ROUTES["asd_social_scenarios"], "context_hint": args.get("scenario_context")}
+
+
+def _current_routine_step(db, user_id: str):
+    return (
+        db.query(asd_models.RoutineStep)
+        .filter_by(user_id=user_id, is_current=True, is_completed=False)
+        .first()
+    )
+
+
+def _serialize_routine_step(step, total: int, position: int) -> dict:
+    return {
+        "id": step.id, "title": step.title, "description": step.description,
+        "position": position, "total_steps": total,
+    }
+
+
+def _create_daily_routine(args: dict, ctx: ToolContext) -> dict:
+    """Replaces any existing (incomplete) routine with a fresh one — a
+    routine is a today-scoped plan, not a permanent record, so starting a
+    new one is expected to supersede rather than accumulate."""
+    db, user = ctx.db, ctx.user
+    steps = args.get("steps") or []
+    if not steps or not isinstance(steps, list):
+        raise ToolError("What are the steps for this routine?")
+
+    db.query(asd_models.RoutineStep).filter_by(user_id=user.id, is_completed=False).delete()
+
+    created = []
+    for i, title in enumerate(steps):
+        step = asd_models.RoutineStep(
+            user_id=user.id, title=str(title).strip(), order_index=i, is_current=(i == 0),
+        )
+        db.add(step)
+        created.append(step)
+    db.commit()
+    for step in created:
+        db.refresh(step)
+
+    return {"steps": [{"id": s.id, "title": s.title} for s in created], "total_steps": len(created)}
+
+
+def _get_current_routine_step(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    step = _current_routine_step(db, user.id)
+    if not step:
+        raise ToolError("There's no active routine right now.")
+    total = db.query(asd_models.RoutineStep).filter_by(user_id=user.id).count()
+    position = db.query(asd_models.RoutineStep).filter(
+        asd_models.RoutineStep.user_id == user.id, asd_models.RoutineStep.order_index <= step.order_index,
+    ).count()
+    return _serialize_routine_step(step, total, position)
+
+
+def _advance_routine_step(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    step = _current_routine_step(db, user.id)
+    if not step:
+        raise ToolError("There's no active routine right now.")
+    step.is_current = False
+    step.is_completed = True
+    next_step = (
+        db.query(asd_models.RoutineStep)
+        .filter(
+            asd_models.RoutineStep.user_id == user.id,
+            asd_models.RoutineStep.order_index > step.order_index,
+            asd_models.RoutineStep.is_completed == False,  # noqa: E712
+        )
+        .order_by(asd_models.RoutineStep.order_index.asc())
+        .first()
+    )
+    if next_step:
+        next_step.is_current = True
+    db.commit()
+    if not next_step:
+        return {"finished": True, "message": "That was the last step — the routine is complete."}
+    db.refresh(next_step)
+    total = db.query(asd_models.RoutineStep).filter_by(user_id=user.id).count()
+    position = db.query(asd_models.RoutineStep).filter(
+        asd_models.RoutineStep.user_id == user.id, asd_models.RoutineStep.order_index <= next_step.order_index,
+    ).count()
+    result = _serialize_routine_step(next_step, total, position)
+    result["finished"] = False
+    return result
+
+
+def _go_back_routine_step(args: dict, ctx: ToolContext) -> dict:
+    db, user = ctx.db, ctx.user
+    step = _current_routine_step(db, user.id)
+    if not step:
+        raise ToolError("There's no active routine right now.")
+    prev_step = (
+        db.query(asd_models.RoutineStep)
+        .filter(asd_models.RoutineStep.user_id == user.id, asd_models.RoutineStep.order_index < step.order_index)
+        .order_by(asd_models.RoutineStep.order_index.desc())
+        .first()
+    )
+    if not prev_step:
+        raise ToolError("This is already the first step.")
+    step.is_current = False
+    prev_step.is_current = True
+    prev_step.is_completed = False
+    db.commit()
+    db.refresh(prev_step)
+    total = db.query(asd_models.RoutineStep).filter_by(user_id=user.id).count()
+    position = db.query(asd_models.RoutineStep).filter(
+        asd_models.RoutineStep.user_id == user.id, asd_models.RoutineStep.order_index <= prev_step.order_index,
+    ).count()
+    return _serialize_routine_step(prev_step, total, position)
+
+
+# ---------------------------------------------------------------------------
+# Cross-cutting
+# ---------------------------------------------------------------------------
+
+def _navigate_to_feature(args: dict, ctx: ToolContext) -> dict:
+    feature = args.get("feature")
+    path = resolve_feature_route(feature)
+    if not path:
+        raise ToolError(f"Unknown feature '{feature}'.")
+    return {"path": path}
+
+
+_VALID_PRESENTATION_PRESETS = ("standard", "focus", "low_stimulation", "text_first")
+
+
+def _set_presentation_preset(args: dict, ctx: ToolContext) -> dict:
+    """Pure intent resolution — no DB write. The actual preference lives
+    entirely client-side (localStorage + document attributes, by design: it's
+    a per-device display preference, not user data), so this tool's only job
+    is turning natural language ("make this simpler") into one of the four
+    known preset ids; the frontend applies it (see presentationPreferences.js)."""
+    preset_id = args.get("preset_id")
+    if preset_id not in _VALID_PRESENTATION_PRESETS:
+        raise ToolError(f"'{preset_id}' isn't one of the display options I know.")
+    return {"preset_id": preset_id}
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+def _schema(properties: dict, required: list[str] | None = None) -> dict:
+    return {"type": "object", "properties": properties, "required": required or []}
+
+
+def _search_my_documents(args: dict, ctx: ToolContext) -> dict:
+    query = (args.get("query") or "").strip()
+    if not query:
+        raise ToolError("A search query is required.")
+    from . import semantic_memory
+    matches = semantic_memory.search(ctx.db, ctx.user.id, query, top_k=5)
+    return {"query": query, "matches": [{"text": m["text"], "score": m["score"]} for m in matches]}
+
+
+TOOL_REGISTRY: dict[str, Tool] = {
+    "get_ocd_progress": Tool(
+        name="get_ocd_progress",
+        description="Retrieve the user's real OCD/ERP progress summary: hierarchy count, completed exposures, average SUDS reduction.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_ocd_progress,
+    ),
+    "get_exposure_hierarchy": Tool(
+        name="get_exposure_hierarchy",
+        description="Retrieve the user's exposure hierarchy (a list of exposure tasks) — optionally filtered by title.",
+        parameters=_schema({"hierarchy_title": {"type": "string", "description": "Optional partial title to search for."}}),
+        risk_level=RiskLevel.READ,
+        handler=_get_exposure_hierarchy,
+    ),
+    "create_exposure": Tool(
+        name="create_exposure",
+        description="Add a new exposure task to (or create) an exposure hierarchy for ERP practice.",
+        parameters=_schema(
+            {
+                "description": {"type": "string", "description": "The exposure itself, e.g. 'Touch a door handle'."},
+                "category": {"type": "string", "description": "OCD category, e.g. 'contamination'."},
+                "estimated_suds": {"type": "integer", "description": "Expected distress 0-100."},
+                "hierarchy_title": {"type": "string", "description": "Which hierarchy to add it to (created if new)."},
+            },
+            required=["description"],
+        ),
+        risk_level=RiskLevel.WRITE_CONFIRM,
+        handler=_create_exposure,
+    ),
+    "reorder_exposure_task": Tool(
+        name="reorder_exposure_task",
+        description="Change the position of one exposure step within its hierarchy. Call get_exposure_hierarchy first so you know its real task_id.",
+        parameters=_schema(
+            {
+                "task_id": {"type": "integer", "description": "The exposure step's real id, from get_exposure_hierarchy."},
+                "new_order_index": {"type": "integer", "description": "New 0-based position in the hierarchy."},
+            },
+            required=["task_id", "new_order_index"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_reorder_exposure_task,
+    ),
+    "delete_exposure_task": Tool(
+        name="delete_exposure_task",
+        description="Permanently remove one exposure step from a hierarchy. Call get_exposure_hierarchy first so you know its real task_id.",
+        parameters=_schema(
+            {"task_id": {"type": "integer", "description": "The exposure step's real id, from get_exposure_hierarchy."}},
+            required=["task_id"],
+        ),
+        # Irreversible — matches the same care already given to complete_erp_session.
+        risk_level=RiskLevel.WRITE_CONFIRM,
+        handler=_delete_exposure_task,
+    ),
+    "start_erp_session": Tool(
+        name="start_erp_session",
+        description="Start a real ERP exposure session for the user, recording their starting SUDS level.",
+        parameters=_schema(
+            {
+                "exposure_description": {"type": "string"},
+                "pre_suds": {"type": "integer", "description": "Starting distress 0-100."},
+            },
+            required=["exposure_description", "pre_suds"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_start_erp_session,
+    ),
+    "record_suds": Tool(
+        name="record_suds",
+        description="Record a SUDS (distress) reading, optionally tied to an in-progress ERP session.",
+        parameters=_schema(
+            {
+                "session_id": {"type": "integer", "description": "The ERP session this reading belongs to, if any."},
+                "value": {"type": "integer", "description": "Distress 0-100."},
+                "context_tag": {"type": "string"},
+            },
+            required=["value"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_record_suds,
+    ),
+    "complete_erp_session": Tool(
+        name="complete_erp_session",
+        description="Complete an in-progress ERP session with the ending SUDS level and outcome.",
+        parameters=_schema(
+            {
+                "session_id": {"type": "integer"},
+                "post_suds": {"type": "integer", "description": "Ending distress 0-100."},
+                "resisted_compulsion": {"type": "boolean"},
+                "notes": {"type": "string"},
+            },
+            required=["session_id", "post_suds"],
+        ),
+        # Unlike start_erp_session/record_suds (low-stakes, easily-corrected data points),
+        # completing finalizes a clinical record — status, an AI-generated summary, and a
+        # resisted_compulsion outcome all become permanent. Confirm before writing it.
+        risk_level=RiskLevel.WRITE_CONFIRM,
+        handler=_complete_erp_session,
+    ),
+    "get_recent_tasks": Tool(
+        name="get_recent_tasks",
+        description="Retrieve the user's recent ADHD task breakdowns and focus sessions.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_recent_tasks,
+    ),
+    "search_my_documents": Tool(
+        name="search_my_documents",
+        description=(
+            "Semantic search over the syllabi/assignments the user uploaded (deadlines, assignments, course "
+            "summaries). Use when the user asks what's due, what an assignment involves, or to plan from their courses."
+        ),
+        parameters=_schema({"query": {"type": "string", "description": "What to look for, in natural language."}}, required=["query"]),
+        risk_level=RiskLevel.READ,
+        handler=_search_my_documents,
+    ),
+    "create_task_breakdown": Tool(
+        name="create_task_breakdown",
+        description="Break a task down into small manageable steps and save it for the user.",
+        parameters=_schema({"task": {"type": "string", "description": "The task to break down."}}, required=["task"]),
+        risk_level=RiskLevel.WRITE_CONFIRM,
+        handler=_create_task_breakdown,
+    ),
+    "get_task_breakdown": Tool(
+        name="get_task_breakdown",
+        description="Retrieve the full steps (description and estimated minutes each) of the user's most recent task breakdown. Call this before changing a step so you know its real current value.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_task_breakdown,
+    ),
+    "update_task_step": Tool(
+        name="update_task_step",
+        description=(
+            "Change one step of the user's most recent task breakdown, e.g. making it smaller/bigger or "
+            "rewording it. `step_index` is 0-based (0 = the first step). Call get_task_breakdown first "
+            "so you know the step's real current size/description before deciding a new one."
+        ),
+        parameters=_schema(
+            {
+                "step_index": {"type": "integer", "description": "0-based position of the step to change (0 = first)."},
+                "new_estimated_minutes": {"type": "integer", "description": "New size in minutes, if changing the size."},
+                "new_description": {"type": "string", "description": "New wording for the step, if changing it."},
+            },
+            required=["step_index"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_update_task_step,
+    ),
+    "start_focus_session": Tool(
+        name="start_focus_session",
+        description="Start a real focus/Pomodoro-style session for the user.",
+        parameters=_schema(
+            {
+                "intent": {"type": "string", "description": "What the user intends to focus on."},
+                "duration_minutes": {"type": "integer"},
+            }
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_start_focus_session,
+    ),
+    "get_active_focus_session": Tool(
+        name="get_active_focus_session",
+        description="Check whether the user currently has a running or paused focus session, and its real remaining time.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_active_focus_session,
+    ),
+    "pause_focus_session": Tool(
+        name="pause_focus_session",
+        description="Pause the user's currently running focus session.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_pause_focus_session,
+    ),
+    "resume_focus_session": Tool(
+        name="resume_focus_session",
+        description="Resume the user's currently paused focus session.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_resume_focus_session,
+    ),
+    "stop_focus_session": Tool(
+        name="stop_focus_session",
+        description="Stop/end the user's currently active (running or paused) focus session.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_stop_focus_session,
+    ),
+    "update_focus_session": Tool(
+        name="update_focus_session",
+        description="Change the target duration (in minutes) of the user's currently active focus session.",
+        parameters=_schema({"duration_minutes": {"type": "integer"}}, required=["duration_minutes"]),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_update_focus_session,
+    ),
+    "get_anxiety_history": Tool(
+        name="get_anxiety_history",
+        description="Retrieve the user's recent grounding/anxiety session history.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_anxiety_history,
+    ),
+    "start_grounding_activity": Tool(
+        name="start_grounding_activity",
+        description="Start a real grounding exercise session appropriate to the user's anxiety level.",
+        parameters=_schema({"anxiety_level": {"type": "integer", "description": "Self-reported anxiety 0-10."}}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_start_grounding_activity,
+    ),
+    "complete_grounding_activity": Tool(
+        name="complete_grounding_activity",
+        description="Record the user's anxiety level after finishing a grounding exercise, closing out the session started by start_grounding_activity.",
+        parameters=_schema(
+            {
+                "session_id": {"type": "integer", "description": "The session to complete, if known — otherwise the most recent one is used."},
+                "post_anxiety": {"type": "integer", "description": "Anxiety level now, 0-10."},
+            },
+            required=["post_anxiety"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_complete_grounding_activity,
+    ),
+    "get_reading_preferences": Tool(
+        name="get_reading_preferences",
+        description="Retrieve the user's saved dyslexia reading preferences/accessibility settings, if any.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_reading_preferences,
+    ),
+    "get_reading_history": Tool(
+        name="get_reading_history",
+        description="Retrieve the user's recent uploaded reading files and progress (page count, OCR status, how far they've read).",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_reading_history,
+    ),
+    "start_social_scenario": Tool(
+        name="start_social_scenario",
+        description="Send the user into the ASD social scenario practice tool for a given situation.",
+        parameters=_schema({"scenario_context": {"type": "string", "description": "Brief description of the upcoming social situation."}}),
+        risk_level=RiskLevel.READ,
+        handler=_start_social_scenario,
+    ),
+    "create_daily_routine": Tool(
+        name="create_daily_routine",
+        description="Create a real step-by-step daily routine/visual schedule for the user, replacing any unfinished one.",
+        parameters=_schema(
+            {"steps": {"type": "array", "items": {"type": "string"}, "description": "The routine's steps, in order, e.g. ['Brush teeth', 'Get dressed', 'Eat breakfast']."}},
+            required=["steps"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_create_daily_routine,
+    ),
+    "get_current_routine_step": Tool(
+        name="get_current_routine_step",
+        description="Check what the current/next step in the user's active daily routine is, without changing anything.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.READ,
+        handler=_get_current_routine_step,
+    ),
+    "advance_routine_step": Tool(
+        name="advance_routine_step",
+        description="Mark the current routine step done and move to the next one.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_advance_routine_step,
+    ),
+    "go_back_routine_step": Tool(
+        name="go_back_routine_step",
+        description="Move back to the previous step in the user's active daily routine.",
+        parameters=_schema({}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_go_back_routine_step,
+    ),
+    "navigate_to_feature": Tool(
+        name="navigate_to_feature",
+        description=(
+            "Navigate the user to a known NeuroBridge screen. `feature` must be one of: "
+            + ", ".join(sorted(FEATURE_ROUTES.keys()))
+        ),
+        parameters=_schema({"feature": {"type": "string", "enum": sorted(FEATURE_ROUTES.keys())}}, required=["feature"]),
+        risk_level=RiskLevel.READ,
+        handler=_navigate_to_feature,
+    ),
+    "set_presentation_preset": Tool(
+        name="set_presentation_preset",
+        description=(
+            "Change how NeuroBridge looks and feels for this user right now — animation, visual intensity, "
+            "density, text size. preset_id must be one of: 'standard' (the regular look), 'focus' (fewer "
+            "distractions), 'low_stimulation' (minimal motion, muted visuals), 'text_first' (bigger text, "
+            "simpler layout). Use this for requests like 'make this simpler', 'reduce the animations', "
+            "'make the text bigger', or 'this feels too busy'."
+        ),
+        parameters=_schema(
+            {"preset_id": {"type": "string", "enum": list(_VALID_PRESENTATION_PRESETS)}},
+            required=["preset_id"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_set_presentation_preset,
+    ),
+    "complete_task_step": Tool(
+        name="complete_task_step",
+        description=(
+            "Mark one step of the user's most recent task breakdown as done. Only when the user clearly says they "
+            "finished it. step_index is 0-based; omit it to complete the first unfinished step."
+        ),
+        parameters=_schema({"step_index": {"type": "integer", "description": "0-based step position (optional)."}}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_complete_task_step,
+        v2_only=True,
+    ),
+    "save_user_preference": Tool(
+        name="save_user_preference",
+        description=(
+            "Remember a preference the user EXPLICITLY asked you to remember (e.g. 'remember I like short answers'). "
+            "Never call this on your own inference."
+        ),
+        parameters=_schema(
+            {
+                "key": {"type": "string", "enum": list(USER_PREFERENCE_KEYS)},
+                "value": {"type": "string"},
+            },
+            required=["key", "value"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_save_user_preference,
+        v2_only=True,
+    ),
+}
+
+
+_gemini_tool_declarations_cache: dict[bool, list[dict]] = {}
+
+
+def build_gemini_tool_declarations(include_v2: bool = False) -> list[dict]:
+    """TOOL_REGISTRY is fixed at import time and never mutated at runtime, so
+    this is genuinely static — compute it once, not on every request."""
+    if include_v2 not in _gemini_tool_declarations_cache:
+        _gemini_tool_declarations_cache[include_v2] = [
+            {
+                "function_declarations": [
+                    {"name": tool.name, "description": tool.description, "parameters": tool.parameters}
+                    for tool in TOOL_REGISTRY.values()
+                    if include_v2 or not tool.v2_only
+                ]
+            }
+        ]
+    return _gemini_tool_declarations_cache[include_v2]
+
+
+def get_user_learnings(user_id: str, db: Session) -> dict:
+    learnings = db.query(agent_models.AgentLearning).filter(agent_models.AgentLearning.user_id == user_id).all()
+    return {l.key: l.value for l in learnings}
+
+
+def get_personalization_summary(module: str, user_id: str, db: Session) -> Optional[str]:
+    """Closes the personalization loop: InterventionOutcome rows are written on
+    every successful write/write_confirm tool call, but were never read back
+    into a future decision until now. Compact by design — a count-by-type
+    summary, not the raw history."""
+    outcomes = (
+        db.query(agent_models.InterventionOutcome)
+        .filter_by(user_id=user_id, module=module)
+        .order_by(agent_models.InterventionOutcome.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    if not outcomes:
+        return None
+
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        counts[outcome.outcome_type] = counts.get(outcome.outcome_type, 0) + 1
+    summary = ", ".join(f"{count} {outcome_type}" for outcome_type, count in counts.items())
+
+    if module == "adhd":
+        sessions = (
+            db.query(adhd_models.FocusSession)
+            .filter_by(user_id=user_id)
+            .order_by(adhd_models.FocusSession.created_at.desc())
+            .limit(10)
+            .all()
+        )
+        durations = [s.duration_minutes for s in sessions if s.duration_minutes]
+        if durations:
+            most_common = max(set(durations), key=durations.count)
+            summary += f"; recent focus sessions tended to be around {most_common} minutes"
+
+    return f"Recent {module} activity: {summary}."
