@@ -1,5 +1,24 @@
 # NEUROBRIDGE — AI CHANGELOG
 
+## 2026-11-20 — 14 Google Ecosystem Integrations Execution
+- **Gemini API Live Verification:** Live production connectivity verified against Google GenAI API with active `GEMINI_API_KEY`. Text generation, structured output (`TaskBreakdownPlan`), function calling (`start_focus_session`), and dense embeddings (`gemini-embedding-001`, 768 dims) all return live production results.
+- **Model Fallback Chain & Resilience:** Configured `gemini-3.5-flash-lite` as default responsive model (<2s response) with fallback chain (`gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3.8-flash`). Enhanced `is_model_unavailable()` to catch transient 503/504 errors, timeouts, network disconnects, and upstream socket drops.
+- **Vertex AI Vector Search Abstraction:** Created `backend/services/vector_search_service.py` introducing `VectorSearchProvider` with dual backends: `LocalExactVectorSearch` (in-DB exact cosine scan, $0 cost) and `VertexAIVectorSearch` (Google Cloud Matching Engine with strict metadata filter `user_id == current_user.id`). Wired into `semantic_memory.py` and `/api/google/status`. Added 5 automated unit/fallback tests (`test_vector_search.py`).
+- **Documentation Master Suite Created:**
+  - `docs/GOOGLE_INTEGRATION_EXECUTION_TRACKER.md`: 14 detailed workstream trackers with status, architecture, and blockers.
+  - `docs/GOOGLE_INTEGRATION_SETUP.md`: Step-by-step service-by-service setup guide and free-tier cost controls.
+  - `docs/GOOGLE_INTEGRATION_ARCHITECTURE.md`: End-to-end architectural diagram and data-flow specifications.
+  - `docs/GOOGLE_INTEGRATION_VERIFICATION.md`: Verification report with live transcripts and test evidence.
+  - Updated `docs/GOOGLE_INTEGRATION_SCORECARD.md` with live active statuses.
+- **Test Suite Results:** 262/262 backend tests pass (100% pass rate). Frontend production build succeeds cleanly.
+
+## 2026-11-20 — UK deployment guide + London defaults
+- New `docs/USER_CLOUD_DEPLOYMENT_GUIDE.md` (16 user actions, UK data-location table, costs, UK GDPR checklist). `USER_ACTION_REQUIRED.md` now points to it.
+- Deploy scripts default to `europe-west2`: Secret Manager UK-only replication, UK log bucket (30 days), BigQuery in London, image cleanup policy, budget alert, Cloud Run max 3 instances / concurrency 40, rate-limit env. The Gemini key is no longer uploaded unless `-IncludeGeminiApiKey`.
+- New `deploy/preflight.ps1`, `deploy/redeploy.ps1`, `deploy/verify.ps1`. Firebase Storage rules removed (unused).
+- Model defaults changed to `gemini-3.8-flash` (2.5 models closed to new users). Analytics is now opt-in (`VITE_FIREBASE_ANALYTICS=true`). Dyspraxia dev port fixed to 8000. Test DB path overridable via `NB_TEST_DB`.
+- Live finding: the new Gemini key is valid, but a stale Windows-level `GEMINI_API_KEY` overrides `.env` (guide step B1).
+
 ## 2026-11-20 — Bri Agent V2 + optional Gemini Live
 - **Bri V2** (`backend/services/bri_v2/`), behind `BRI_AGENT_V2_ENABLED` (default on). V1 stays intact as the fallback, both for any V2 fault before a write and when the flag is off.
 - **Follow-ups:** persisted per-conversation state (new table `agent_conversation_states`).
