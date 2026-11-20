@@ -1,0 +1,550 @@
+import { useState, useId } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { Brain, ShieldCheck, User, Heart, Loader2, Eye, EyeOff, Sparkles, Link2, UserPlus, LogIn, MailCheck } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+
+// ─────────────────────────────────────────────
+//  Role definitions for the 3-way toggle
+// ─────────────────────────────────────────────
+const ROLES = [
+  {
+    id: "user",     label: "User",     icon: User,        desc: "Neurodivergent individual",
+    border: "border-sky-300",    bg: "bg-sky-50",    hover: "hover:bg-sky-100",
+    iconColor: "text-sky-500",   nameColor: "text-sky-700",   mutedColor: "text-sky-700",
+  },
+  {
+    id: "guardian", label: "Guardian", icon: Heart,       desc: "Family Care-Circle member",
+    border: "border-violet-300", bg: "bg-violet-50", hover: "hover:bg-violet-100",
+    iconColor: "text-violet-500", nameColor: "text-violet-700", mutedColor: "text-violet-700",
+  },
+  {
+    id: "support",    label: "Support",    icon: ShieldCheck, desc: "Therapist / trusted support person",
+    border: "border-amber-300",  bg: "bg-amber-50",  hover: "hover:bg-amber-100",
+    iconColor: "text-amber-500", nameColor: "text-amber-700",  mutedColor: "text-amber-700",
+  },
+];
+
+// ─────────────────────────────────────────────
+//  Glassmorphism Login Page — 3-way RBAC
+// ─────────────────────────────────────────────
+export default function Login({ forcedRole = null, hideRoleToggle = false }) {
+  const { login, loginWithEmail, loginWithGoogle, googleSignInAvailable, signUpWithEmail } = useAuth();
+
+  async function handleGoogleSignIn() {
+    setError("");
+    setLoadingRole("google");
+    try {
+      const user = await loginWithGoogle();
+      navigate(getRedirectPath(user), { replace: true });
+    } catch (e) {
+      if (e?.code !== "auth/popup-closed-by-user") setError(e?.message || "Google sign-in failed. Please try again.");
+    } finally {
+      setLoadingRole(null);
+    }
+  }
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // “signin” | “signup”
+  const [mode, setMode] = useState("signin");
+  const [selectedRole, setSelectedRole] = useState(forcedRole || "user");
+  const [name, setName]             = useState("");
+  const [email, setEmail]           = useState("");
+  const [password, setPassword]     = useState("");
+  const [confirmPw, setConfirmPw]   = useState("");
+  const [careLinkId, setCareLinkId] = useState("");
+  const [showPassword, setShowPassword]   = useState(false);
+  const [showConfirm, setShowConfirm]     = useState(false);
+  const [loadingRole, setLoadingRole]     = useState(null);
+  const [error, setError]           = useState("");
+  const [confirmed, setConfirmed]   = useState(false); // email confirmation pending
+
+  const from = location.state?.from?.pathname;
+  const roleConfig = ROLES.find((r) => r.id === selectedRole);
+  const nameId = useId();
+  const emailId = useId();
+  const passwordId = useId();
+  const confirmPwId = useId();
+  const careLinkIdId = useId();
+  function inferDemoAccountByEmail(rawEmail, rawCareLinkId) {
+    const normalizedEmail = String(rawEmail || "").toLowerCase().trim();
+    const normalizedCareLink = String(rawCareLinkId || "").toUpperCase().trim();
+
+    if (normalizedEmail === "riya@neurobridge.in" || normalizedEmail.includes("riya")) {
+      return { role: "user", accountKey: "user_asd_anxiety" };
+    }
+    if (
+      normalizedEmail === "neha.guardian@neurobridge.in" ||
+      normalizedEmail.includes("neha") ||
+      normalizedCareLink === "CL-RIYA-0088"
+    ) {
+      return { role: "guardian", accountKey: "guardian_asd_anxiety" };
+    }
+    return null;
+  }
+
+  function switchMode(next) {
+    setMode(next);
+    setError("");
+    setName(""); setEmail(""); setPassword(""); setConfirmPw("");
+    if (forcedRole) {
+      setSelectedRole(forcedRole);
+    }
+  }
+
+  function getRedirectPath(user) {
+    if (user.role === "support" || user.role === "admin") return "/support-dashboard";
+    if (user.role === "guardian") return "/guardian-dashboard";
+
+    if (!user?._supabase && !user?._firebase) return "/onboarding/disorders";
+    if (!user?.onboardingCompleted) return "/onboarding/disorders";
+    return "/";
+  }
+
+  async function handleDemoLogin(role, options = {}) {
+    setError("");
+    setLoadingRole(role);
+    try {
+      // infer account key the same way as before
+      const normalizedEmail = String(options.email || "").toLowerCase();
+      const normalizedCareLink = String(options.careLinkId || "").toUpperCase();
+      let accountKey = options.accountKey;
+      if (!accountKey) {
+        if (normalizedEmail.includes("neha") || normalizedCareLink === "CL-RIYA-0088") accountKey = "guardian_asd_anxiety";
+        else if (normalizedEmail.includes("riya")) accountKey = role === "guardian" ? "guardian_asd_anxiety" : "user_asd_anxiety";
+        else if (role === "user") accountKey = "user_asd_anxiety";
+        else if (role === "guardian") accountKey = "guardian_asd_anxiety";
+        else accountKey = role;
+      }
+      const user = await login(role, { ...options, accountKey });
+      navigate(getRedirectPath(user), { replace: true });
+    } catch (e) {
+      setError(e.message || "Login failed. Please try again.");
+    } finally {
+      setLoadingRole(null);
+    }
+  }
+
+  async function handleFormSubmit(e) {
+    e.preventDefault();
+    setError("");
+
+    if (mode === "signup") {
+      if (!name.trim()) { setError("Please enter your name."); return; }
+      if (!email || !password) { setError("Please fill in all fields."); return; }
+      if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+      if (password !== confirmPw) { setError("Passwords do not match."); return; }
+      setLoadingRole("form");
+      try {
+        const result = await signUpWithEmail(email.trim(), password, name.trim(), selectedRole);
+        if (result.needsConfirmation) {
+          setConfirmed(true); // show confirmation-pending screen
+        } else {
+          navigate(getRedirectPath(result), { replace: true });
+        }
+      } catch (e) {
+        const msg = e.message || "";
+        if (msg.toLowerCase().includes("networkerror") || msg.toLowerCase().includes("fetch")) {
+          setError("Cannot reach the server right now. The project may be paused. Use the Demo Access buttons below to get in.");
+        } else {
+          setError(msg || "Sign up failed. Please try again.");
+        }
+      } finally {
+        setLoadingRole(null);
+      }
+    } else {
+      if (!email || !password) { setError("Please enter your credentials."); return; }
+      setLoadingRole("form");
+      try {
+        const user = await loginWithEmail(email.trim(), password);
+        navigate(getRedirectPath(user), { replace: true });
+      } catch (e) {
+        const msg = e.message || "";
+        const mappedDemo = inferDemoAccountByEmail(email, careLinkId);
+        // If Supabase is unreachable, still attempt mapped demo fallback first.
+        if (msg.toLowerCase().includes("networkerror") || msg.toLowerCase().includes("fetch")) {
+          if (mappedDemo) {
+            try {
+              const demoUser = await login(mappedDemo.role, {
+                email,
+                careLinkId,
+                accountKey: mappedDemo.accountKey,
+              });
+              navigate(getRedirectPath(demoUser), { replace: true });
+              return;
+            } catch {
+              setError("Cannot reach the server and demo fallback could not be loaded.");
+              return;
+            }
+          }
+
+          setError("Cannot reach the server — the Supabase project may be paused. Restore it at supabase.com/dashboard, or use Demo Access below.");
+          setLoadingRole(null);
+          return;
+        }
+
+        if (mappedDemo) {
+          try {
+            const demoUser = await login(mappedDemo.role, {
+              email,
+              careLinkId,
+              accountKey: mappedDemo.accountKey,
+            });
+            navigate(getRedirectPath(demoUser), { replace: true });
+            return;
+          } catch {
+            setError("Sign in failed. Demo fallback could not be loaded.");
+            return;
+          }
+        }
+
+        setError(e.message || "Sign in failed. Check your email and password.");
+      } finally {
+        setLoadingRole(null);
+      }
+    }
+  }
+
+  return (
+    <div className="relative min-h-screen w-full flex items-center justify-center overflow-hidden bg-gradient-to-br from-green-50 via-white to-teal-50">
+      {/* Ambient blobs */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-green-300/30 blur-3xl" />
+        <div className="absolute bottom-0 right-0 w-80 h-80 rounded-full bg-teal-300/25 blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-green-200/20 blur-3xl" />
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="relative z-10 w-full max-w-md px-4 py-8"
+      >
+        <div className="rounded-3xl border border-green-100 bg-white shadow-xl shadow-green-100/60 p-8">
+
+          {/* ── Email confirmation pending ─────── */}
+          <AnimatePresence mode="wait">
+            {confirmed ? (
+              <motion.div
+                key="confirmed"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex flex-col items-center gap-4 py-4 text-center"
+              >
+                <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center">
+                  <MailCheck className="w-8 h-8 text-emerald-500" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-900">Check your inbox</h2>
+                <p className="text-sm text-slate-500 leading-relaxed">
+                  We sent a confirmation link to <span className="text-slate-800 font-medium">{email}</span>.
+                  Click it to activate your account, then come back and sign in.
+                </p>
+                <button
+                  onClick={() => { setConfirmed(false); switchMode("signin"); }}
+                  className="mt-2 text-sm text-primary hover:text-primary/80 underline underline-offset-2 transition"
+                >
+                  Back to Sign In
+                </button>
+              </motion.div>
+            ) : (
+              <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+
+                {/* Logo */}
+                <div className="flex flex-col items-center gap-3 mb-6">
+                  <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
+                    <Brain className="w-7 h-7 text-white" />
+                  </div>
+                  <div className="text-center">
+                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">NeuroBridge</h1>
+                    <p className="text-sm text-slate-500 mt-0.5">Neuro-inclusive care platform</p>
+                  </div>
+                </div>
+
+                {/* ── Sign in / Sign up tab toggle ── */}
+                <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1 gap-1 mb-5">
+                  {[
+                    { id: "signin", label: "Sign In",  icon: LogIn },
+                    { id: "signup", label: "Sign Up",  icon: UserPlus },
+                  ].map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => switchMode(id)}
+                      aria-pressed={mode === id}
+                      className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        mode === id
+                          ? "bg-green-50 border border-green-300 text-green-800"
+                          : "text-slate-600 hover:text-slate-700 hover:bg-white"
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* ── Role toggle (sign-up shows all; sign-in shows user + guardian) ── */}
+                {!hideRoleToggle && (
+                  <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1 gap-1 mb-2">
+                    {(mode === "signup" ? ROLES : ROLES).map((r) => {
+                      const Icon = r.icon;
+                      const active = selectedRole === r.id;
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => { setSelectedRole(r.id); setError(""); }}
+                          aria-pressed={active}
+                          className={`flex-1 flex flex-col items-center gap-1 py-2.5 px-2 rounded-xl text-xs font-medium transition-all ${
+                            active
+                              ? `${r.bg} ${r.border} border`
+                              : "text-slate-600 hover:text-slate-700 hover:bg-white"
+                          }`}
+                        >
+                          <Icon className={`w-4 h-4 ${active ? r.iconColor : ""}`} />
+                          <span className={active ? r.nameColor : "text-slate-600"}>{r.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <AnimatePresence mode="wait">
+                  <motion.p
+                    key={selectedRole}
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.18 }}
+                    className="text-center text-xs text-slate-600 mb-5"
+                  >
+                    {roleConfig?.desc}
+                  </motion.p>
+                </AnimatePresence>
+
+                {/* ── Form fields ───────────────── */}
+                <form onSubmit={handleFormSubmit} className="space-y-4">
+
+                  {/* Name — sign-up only */}
+                  <AnimatePresence>
+                    {mode === "signup" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-1 overflow-hidden"
+                      >
+                        <label htmlFor={nameId} className="text-xs font-medium text-slate-500 uppercase tracking-widest">Full Name</label>
+                        <input
+                          id={nameId}
+                          type="text"
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="Your name"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-400/60 transition"
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Email */}
+                  <div className="space-y-1">
+                    <label htmlFor={emailId} className="text-xs font-medium text-slate-500 uppercase tracking-widest">Email</label>
+                    <input
+                      id={emailId}
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-400/60 transition"
+                    />
+                  </div>
+
+                  {/* Password */}
+                  <div className="space-y-1">
+                    <label htmlFor={passwordId} className="text-xs font-medium text-slate-500 uppercase tracking-widest">Password</label>
+                    <div className="relative">
+                      <input
+                        id={passwordId}
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder={mode === "signup" ? "Min. 8 characters" : "••••••••"}
+                        autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 pr-11 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-400/60 transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                        aria-pressed={showPassword}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 transition"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Confirm password — sign-up only */}
+                  <AnimatePresence>
+                    {mode === "signup" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-1 overflow-hidden"
+                      >
+                        <label htmlFor={confirmPwId} className="text-xs font-medium text-slate-500 uppercase tracking-widest">Confirm Password</label>
+                        <div className="relative">
+                          <input
+                            id={confirmPwId}
+                            type={showConfirm ? "text" : "password"}
+                            value={confirmPw}
+                            onChange={(e) => setConfirmPw(e.target.value)}
+                            placeholder="Repeat password"
+                            autoComplete="new-password"
+                            aria-invalid={!!(confirmPw && confirmPw !== password)}
+                            aria-describedby={confirmPw && confirmPw !== password ? `${confirmPwId}-error` : undefined}
+                            className={`w-full rounded-xl border bg-white px-4 py-3 pr-11 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-400/60 transition ${
+                              confirmPw && confirmPw !== password
+                                ? "border-red-400"
+                                : "border-slate-200"
+                            }`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirm((v) => !v)}
+                            aria-label={showConfirm ? "Hide password" : "Show password"}
+                            aria-pressed={showConfirm}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-700 transition"
+                          >
+                            {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        {confirmPw && confirmPw !== password && (
+                          <p id={`${confirmPwId}-error`} role="alert" className="text-[11px] text-red-500">Passwords do not match</p>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Guardian-only: Care-Link ID (sign-in only — sign-up sets this later) */}
+                  <AnimatePresence>
+                    {selectedRole === "guardian" && mode === "signin" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-1 overflow-hidden"
+                      >
+                        <label htmlFor={careLinkIdId} className="text-xs font-medium text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+                          <Link2 className="w-3 h-3" aria-hidden="true" /> Ward's Care-Link ID
+                        </label>
+                        <input
+                          id={careLinkIdId}
+                          type="text"
+                          value={careLinkId}
+                          onChange={(e) => setCareLinkId(e.target.value)}
+                          placeholder="e.g. CL-ARUN-0042"
+                          className="w-full rounded-xl border border-violet-300 bg-violet-50 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 transition"
+                        />
+                        <p className="text-[11px] text-violet-500/80 leading-tight">
+                          Provided by your ward's NeuroBridge account. Links your Care-Circle.
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Error */}
+                  <AnimatePresence>
+                    {error && (
+                      <motion.p
+                        role="alert"
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"
+                      >
+                        {error}
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
+
+                  <button
+                    type="submit"
+                    disabled={!!loadingRole}
+                    className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 hover:bg-primary/90 disabled:opacity-60 transition flex items-center justify-center gap-2"
+                  >
+                    {loadingRole === "form"
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : mode === "signup"
+                        ? <><UserPlus className="w-4 h-4" /> Create Account</>
+                        : <><LogIn className="w-4 h-4" /> Sign In</>
+                    }
+                  </button>
+                </form>
+
+                {googleSignInAvailable && (
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={!!loadingRole}
+                    className="mt-3 w-full rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 transition flex items-center justify-center gap-2"
+                  >
+                    {loadingRole === "google" ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+                      <svg aria-hidden="true" viewBox="0 0 48 48" className="w-4 h-4"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>
+                    )}
+                    Continue with Google
+                  </button>
+                )}
+
+                {/* Divider */}
+                <div className="my-6 flex items-center gap-3">
+                  <div className="flex-1 h-px bg-slate-200" />
+                  <span className="text-xs text-slate-600">Demo Access</span>
+                  <div className="flex-1 h-px bg-slate-200" />
+                </div>
+
+                {/* Demo cards — all 3 roles */}
+                <div className="grid grid-cols-3 gap-2">
+                  {ROLES.map((r) => {
+                    const Icon = r.icon;
+                    const isLoading = loadingRole === r.id;
+                    return (
+                      <motion.button
+                        key={r.id}
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.96 }}
+                        onClick={() => { setSelectedRole(r.id); handleDemoLogin(r.id); }}
+                        disabled={!!loadingRole}
+                        className={`flex flex-col items-center gap-2 rounded-2xl border ${r.border} ${r.bg} ${r.hover} px-3 py-4 disabled:opacity-50 transition`}
+                      >
+                        {isLoading
+                          ? <Loader2 className={`w-6 h-6 ${r.iconColor} animate-spin`} />
+                          : <Icon className={`w-6 h-6 ${r.iconColor}`} />
+                        }
+                        <div className="text-center">
+                          <div className={`text-xs font-semibold ${r.nameColor}`}>{r.label}</div>
+                          <div className={`text-[10px] ${r.mutedColor} leading-tight`}>Demo</div>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+
+                <p className="mt-5 text-center text-xs text-slate-600">
+                  <Sparkles className="inline w-3 h-3 mr-1" />
+                  Demo credentials are pre-filled. No real data is stored.
+                </p>
+
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+        </div>
+      </motion.div>
+    </div>
+  );
+}
