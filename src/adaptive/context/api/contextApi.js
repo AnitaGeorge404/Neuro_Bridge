@@ -38,38 +38,18 @@ export function handleGetContextSnapshot(req = {}) {
 
 /**
  * Client service helper for Adaptive Intelligence modules to retrieve the current context snapshot.
- * Uses HTTP fetch if endpoint is configured, or falls back to in-memory contextEngine facade.
  *
- * @param {object} [options]
- * @param {string} [options.apiBaseUrl] - Optional API base URL override
+ * This context engine is entirely client-side (in-browser interaction tracking, mood inference,
+ * etc.) — there has never been a real GET /api/context/current route on the backend to serve it
+ * (handleGetContextSnapshot above is a facade for a server this app doesn't have), so a remote
+ * fetch here can only ever 404. ContextProvider.jsx calls this on every route change and on every
+ * tracked user interaction, so that dead network attempt was firing constantly in production —
+ * wasted round-trips client-side and 404 log spam server-side, before silently falling back to
+ * the exact same local result it could resolve immediately. Always resolve locally.
+ *
  * @returns {Promise<import("../types/contextTypes.js").ContextSnapshot>}
  */
-export async function getContextSnapshotAPI(options = {}) {
-  const apiBaseUrl =
-    options.apiBaseUrl ||
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      import.meta.env.VITE_API_BASE_URL) ||
-    "";
-
-  if (apiBaseUrl) {
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/context/current`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (response.ok) {
-        const json = await response.json();
-        if (json && json.data) {
-          return json.data;
-        }
-      }
-    } catch (_err) {
-      // Fallback gracefully to in-memory facade API
-    }
-  }
-
-  // Local synchronous fallback
+export async function getContextSnapshotAPI() {
   const res = handleGetContextSnapshot();
   return res.data;
 }
