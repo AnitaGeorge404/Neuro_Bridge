@@ -2,21 +2,20 @@ import os
 import json
 import re
 import time
-import google.generativeai as genai
+from . import genai_compat as genai
+from . import google_ai_service
 from google.api_core.exceptions import DeadlineExceeded, InternalServerError, ServiceUnavailable
 from typing import List
 
 # Configure Gemini
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+api_key = google_ai_service.backend_name()  # Gemini API key or Vertex AI
 
 # Same model/timeout knobs as the agent orchestrator (backend/services/agent_service.py)
 # — these calls are smaller one-shot generations, not a multi-round chat, so they get a
 # shorter default timeout and a single retry on transient errors only.
-MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-3.6-flash")
+MODEL_NAME = google_ai_service.MODEL_FLASH
 _TIMEOUT_S = int(os.getenv("AGENT_LLM_TIMEOUT_MS", "15000")) / 1000
-_TRANSIENT_ERRORS = (DeadlineExceeded, ServiceUnavailable, InternalServerError, TimeoutError, ConnectionError)
+_TRANSIENT_ERRORS = (DeadlineExceeded, ServiceUnavailable, InternalServerError) + google_ai_service.TRANSIENT_ERRORS
 
 
 def _generate_with_retry(model: "genai.GenerativeModel", prompt: str):

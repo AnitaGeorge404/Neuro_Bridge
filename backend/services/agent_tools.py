@@ -23,6 +23,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser
+from . import google_ai_service
 from ..models import adhd_models, agent_models, anxiety_models, asd_models, ocd_models
 from . import ai_service
 from .navigation import FEATURE_ROUTES, resolve_feature_route
@@ -49,6 +50,9 @@ class Tool:
     parameters: dict
     risk_level: RiskLevel
     handler: Callable[[dict, ToolContext], dict]
+    # Only declared to Gemini by Bri V2 (which enforces extra policy, e.g. the
+    # explicit-request gate on memory writes). V1's declarations exclude these.
+    v2_only: bool = False
 
 
 class ToolError(Exception):
@@ -328,6 +332,18 @@ def _create_task_breakdown(args: dict, ctx: ToolContext) -> dict:
             steps_data = json.loads(text)
         except Exception:
             steps_data = None
+    elif google_ai_service.is_configured():
+        # Gemini structured output (response_schema) — no fragile JSON-from-markdown parsing.
+        plan = google_ai_service.generate_structured(
+            f"Task: {task}",
+            response_schema=google_ai_service.TaskBreakdownPlan,
+            system_instruction=(
+                "You help neurodivergent people start tasks. Break the task into 3-5 concrete, "
+                "physically doable steps. The first step must take 5 minutes or less. No pep talk."
+            ),
+        )
+        if plan and plan.steps:
+            steps_data = [s.model_dump() for s in plan.steps[:6]]
 
     if not steps_data:
         steps_data = [{"description": "Start with the smallest possible first step", "estimated_minutes": 5}]
@@ -421,6 +437,58 @@ def _update_task_step(args: dict, ctx: ToolContext) -> dict:
     db.refresh(breakdown)
 
     return _serialize_breakdown(breakdown)
+
+
+def _complete_task_step(args: dict, ctx: ToolContext) -> dict:
+    """Marks one step of the user's most recent breakdown done. step_index is
+    0-based; omitted = the first not-yet-completed step ("I finished it")."""
+    db, user = ctx.db, ctx.user
+    breakdown = _most_recent_breakdown(db, user.id)
+    if not breakdown:
+        raise ToolError("You don't have a task breakdown yet.")
+    steps = sorted(breakdown.steps, key=lambda s: s.id)
+    step_index = args.get("step_index")
+    if step_index is None:
+        step_index = next((i for i, s in enumerate(steps) if not s.is_completed), None)
+        if step_index is None:
+            raise ToolError("Every step in that breakdown is already done.")
+    if not (0 <= int(step_index) < len(steps)):
+        raise ToolError(f"That breakdown only has {len(steps)} step(s).")
+    steps[int(step_index)].is_completed = True
+    db.commit()
+    db.refresh(breakdown)
+    result = _serialize_breakdown(breakdown)
+    result["completed_index"] = int(step_index)
+    return result
+
+
+# Whitelisted, user-controlled preference keys only — memory never stores
+# free text, diagnoses or inferred traits.
+USER_PREFERENCE_KEYS = {
+    "response_length": ("short", "medium", "detailed"),
+    "task_step_minutes": ("2", "5", "10", "15", "25"),
+    "support_style": ("gentle", "direct", "structured"),
+    "presentation": ("standard", "focus", "low_stimulation", "text_first"),
+    "voice_replies": ("on", "off"),
+}
+
+
+def _save_user_preference(args: dict, ctx: ToolContext) -> dict:
+    key = (args.get("key") or "").strip()
+    value = str(args.get("value") or "").strip().lower()
+    allowed = USER_PREFERENCE_KEYS.get(key)
+    if not allowed:
+        raise ToolError("I can only remember response length, step size, support style, presentation, or voice replies.")
+    if value not in allowed:
+        raise ToolError(f"For {key.replace('_', ' ')} I can remember one of: {', '.join(allowed)}.")
+    db = ctx.db
+    row = db.query(agent_models.AgentLearning).filter_by(user_id=ctx.user.id, key=key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(agent_models.AgentLearning(user_id=ctx.user.id, category="user_preference", key=key, value=value))
+    db.commit()
+    return {"key": key, "value": value}
 
 
 _FOCUS_ACTIVE_STATUSES = ("RUNNING", "PAUSED")
@@ -832,6 +900,15 @@ def _schema(properties: dict, required: list[str] | None = None) -> dict:
     return {"type": "object", "properties": properties, "required": required or []}
 
 
+def _search_my_documents(args: dict, ctx: ToolContext) -> dict:
+    query = (args.get("query") or "").strip()
+    if not query:
+        raise ToolError("A search query is required.")
+    from . import semantic_memory
+    matches = semantic_memory.search(ctx.db, ctx.user.id, query, top_k=5)
+    return {"query": query, "matches": [{"text": m["text"], "score": m["score"]} for m in matches]}
+
+
 TOOL_REGISTRY: dict[str, Tool] = {
     "get_ocd_progress": Tool(
         name="get_ocd_progress",
@@ -937,6 +1014,16 @@ TOOL_REGISTRY: dict[str, Tool] = {
         parameters=_schema({}),
         risk_level=RiskLevel.READ,
         handler=_get_recent_tasks,
+    ),
+    "search_my_documents": Tool(
+        name="search_my_documents",
+        description=(
+            "Semantic search over the syllabi/assignments the user uploaded (deadlines, assignments, course "
+            "summaries). Use when the user asks what's due, what an assignment involves, or to plan from their courses."
+        ),
+        parameters=_schema({"query": {"type": "string", "description": "What to look for, in natural language."}}, required=["query"]),
+        risk_level=RiskLevel.READ,
+        handler=_search_my_documents,
     ),
     "create_task_breakdown": Tool(
         name="create_task_breakdown",
@@ -1122,26 +1209,54 @@ TOOL_REGISTRY: dict[str, Tool] = {
         risk_level=RiskLevel.WRITE_LOW,
         handler=_set_presentation_preset,
     ),
+    "complete_task_step": Tool(
+        name="complete_task_step",
+        description=(
+            "Mark one step of the user's most recent task breakdown as done. Only when the user clearly says they "
+            "finished it. step_index is 0-based; omit it to complete the first unfinished step."
+        ),
+        parameters=_schema({"step_index": {"type": "integer", "description": "0-based step position (optional)."}}),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_complete_task_step,
+        v2_only=True,
+    ),
+    "save_user_preference": Tool(
+        name="save_user_preference",
+        description=(
+            "Remember a preference the user EXPLICITLY asked you to remember (e.g. 'remember I like short answers'). "
+            "Never call this on your own inference."
+        ),
+        parameters=_schema(
+            {
+                "key": {"type": "string", "enum": list(USER_PREFERENCE_KEYS)},
+                "value": {"type": "string"},
+            },
+            required=["key", "value"],
+        ),
+        risk_level=RiskLevel.WRITE_LOW,
+        handler=_save_user_preference,
+        v2_only=True,
+    ),
 }
 
 
-_gemini_tool_declarations_cache: Optional[list[dict]] = None
+_gemini_tool_declarations_cache: dict[bool, list[dict]] = {}
 
 
-def build_gemini_tool_declarations() -> list[dict]:
+def build_gemini_tool_declarations(include_v2: bool = False) -> list[dict]:
     """TOOL_REGISTRY is fixed at import time and never mutated at runtime, so
     this is genuinely static — compute it once, not on every request."""
-    global _gemini_tool_declarations_cache
-    if _gemini_tool_declarations_cache is None:
-        _gemini_tool_declarations_cache = [
+    if include_v2 not in _gemini_tool_declarations_cache:
+        _gemini_tool_declarations_cache[include_v2] = [
             {
                 "function_declarations": [
                     {"name": tool.name, "description": tool.description, "parameters": tool.parameters}
                     for tool in TOOL_REGISTRY.values()
+                    if include_v2 or not tool.v2_only
                 ]
             }
         ]
-    return _gemini_tool_declarations_cache
+    return _gemini_tool_declarations_cache[include_v2]
 
 
 def get_user_learnings(user_id: str, db: Session) -> dict:

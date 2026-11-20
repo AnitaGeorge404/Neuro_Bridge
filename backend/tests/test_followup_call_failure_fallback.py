@@ -58,7 +58,7 @@ class _FailSecondCallModel:
 
 
 def test_followup_call_failure_after_a_successful_read_renders_the_real_tool_data_not_a_platitude(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
 
@@ -93,7 +93,7 @@ def test_followup_call_failure_on_a_focus_control_action_renders_the_real_sessio
     their own small deterministic renderer too — real remaining time, not a
     bare 'Done.' — since that data is already sitting right there in the
     tool's real result."""
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
 
@@ -116,7 +116,7 @@ def test_followup_call_failure_on_start_grounding_renders_the_real_exercise_star
     exercise was "started", but a transient follow-up-call failure right
     after the real start_grounding_activity call was silently swallowed into
     a bare 'Done.', leaving the user with no idea what was actually started."""
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
 
@@ -135,7 +135,7 @@ def test_followup_call_failure_on_start_grounding_renders_the_real_exercise_star
 
 
 def test_followup_call_failure_on_complete_grounding_renders_the_real_before_after(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
 
@@ -167,7 +167,7 @@ def test_followup_call_failure_on_complete_grounding_renders_the_real_before_aft
 
 
 def test_followup_call_failure_on_reorder_exposure_task_renders_the_real_new_position(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     from backend.models import ocd_models
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
@@ -200,7 +200,7 @@ def test_followup_call_failure_on_reorder_exposure_task_renders_the_real_new_pos
 
 
 def test_followup_call_failure_on_record_suds_renders_the_real_value(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
 
@@ -225,7 +225,7 @@ def test_followup_call_failure_with_truly_no_renderable_tool_falls_back_to_the_o
     deterministic renderer at all. (record_suds/reorder/delete_exposure_task
     all gained real fallbacks this session — see the tests above — so this
     one had to move to a genuinely still-uncovered tool.)"""
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     from backend.models import adhd_models
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")

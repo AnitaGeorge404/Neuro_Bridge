@@ -284,19 +284,19 @@ export default function AdaptiveAnxietyEngine() {
     <div className="max-w-2xl mx-auto space-y-6 py-4 sm:py-8">
       {/* ── Evaluator Demo Drawer (Collapsible / Non-Intrusive) ── */}
       <div className="border border-[#C7D2FE] rounded-2xl p-3 bg-[#F0F4FF]/60">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-[11px] font-mono border-[#C7D2FE] text-[#6B7BA8]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant="outline" className="shrink-0 text-[11px] font-mono border-[#C7D2FE] text-[#6B7BA8]">
               Evaluator Tools
             </Badge>
-            <span className="text-xs text-[#6B7BA8]">
+            <span className="min-w-0 text-xs text-[#6B7BA8]">
               Simulate passive ContextSnapshots & inspect dataflow
             </span>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1 text-[#6B7BA8] hover:text-[#4F6BF6]"
+            className="h-7 shrink-0 text-xs gap-1 text-[#6B7BA8] hover:text-[#4F6BF6]"
             onClick={() => setShowEvaluatorDrawer(!showEvaluatorDrawer)}
           >
             {showEvaluatorDrawer ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -337,29 +337,29 @@ export default function AdaptiveAnxietyEngine() {
 
             {/* Pipeline Data Breakdown */}
             <div className="p-2.5 rounded-xl bg-white border border-[#C7D2FE] font-mono text-[11px] space-y-1.5">
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5">
                 <span className="text-[#6B7BA8]">1. Active Context:</span>
                 <span className="font-bold text-[#1E2A5E]">
                   {activeDemoScenario ? activeDemoScenario.title : "Live Passive Telemetry"}
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5">
                 <span className="text-[#6B7BA8]">2. Active Evidence:</span>
                 <span className="text-[#4F6BF6] font-bold">
                   {derivedState.activeEvidence?.length || 0} friction signals (Deviation: {Math.round(derivedState.behavioralDeviation.value * 100)}%)
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5">
                 <span className="text-[#6B7BA8]">3. Inferred Pattern:</span>
                 <span className="font-bold text-[#1E2A5E]">{reasoningResult.pattern}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5">
                 <span className="text-[#6B7BA8]">4. Response Tier:</span>
                 <span className="font-bold text-[#1E2A5E]">
                   Tier {reasoningResult.responseTier} ({reasoningResult.responseTier === 0 ? "Quiet" : reasoningResult.responseTier === 1 ? "Subtle" : reasoningResult.responseTier === 2 ? "Gentle" : "Active"})
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-wrap justify-between gap-x-2 gap-y-0.5">
                 <span className="text-[#6B7BA8]">5. Auto-Ranked Action:</span>
                 <span className="font-bold text-[#34D399]">
                   {planResult.recommendedIntervention.title} ({Math.round(planResult.recommendedIntervention.score * 100)}% fit)

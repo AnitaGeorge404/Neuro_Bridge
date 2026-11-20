@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { getAppCheckHeaders, getFirebaseIdToken } from "@/lib/firebase";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:8000");
 
@@ -31,6 +32,20 @@ function getOrCreateDemoSessionId() {
  * resolution, and duplicating it risks the two copies drifting apart.
  */
 export async function backendAuthHeaders(user) {
+  const appCheck = await getAppCheckHeaders();
+  const identity = await identityHeaders(user);
+  return identity.Authorization ? { ...identity, ...appCheck } : identity;
+}
+
+async function identityHeaders(user) {
+  if (user?._firebase) {
+    try {
+      const token = await getFirebaseIdToken();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    } catch {
+      return {};
+    }
+  }
   if (user?._supabase) {
     try {
       const { data } = await supabase.auth.getSession();

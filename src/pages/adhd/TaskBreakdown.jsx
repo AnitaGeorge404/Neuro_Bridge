@@ -40,6 +40,7 @@ import {
 import { useLocation } from "react-router-dom";
 
 import { useAuth } from "@/context/AuthContext";
+import SyllabusPlanner from "@/components/adhd/SyllabusPlanner";
 
 import SupportToolThemeProvider from "@/theme/SupportToolThemeProvider";
 import SupportToolLayout from "@/components/support/SupportToolLayout";
@@ -1210,6 +1211,8 @@ const TaskBreakdown = ({
                     />
                   </div>
                 </header>
+
+                <SyllabusPlanner />
 
                 <section className="relative overflow-hidden rounded-[25px] border border-[#d3e6cf] bg-gradient-to-br from-white via-[#fefffc] to-[#f8fff4] px-4 py-4 shadow-[0_9px_22px_rgba(77,130,73,0.05)] sm:px-[22px] sm:py-[20px]">
                   <div className="absolute -left-[22px] top-[12px] h-[46px] w-[46px] rounded-full border-[4px] border-[#e5efb4]" />

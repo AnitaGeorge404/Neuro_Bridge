@@ -34,7 +34,7 @@ class _FlakyFakeModel:
 
 
 def test_transient_llm_error_is_retried_once_and_succeeds(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
     chat = _FlakyFakeChat(DeadlineExceeded("timed out"), FakeResponse(parts=[FakePart()], text="Got there eventually."))
@@ -54,7 +54,7 @@ def test_transient_llm_error_is_retried_once_and_succeeds(user_a, monkeypatch):
 
 
 def test_non_transient_llm_error_is_not_retried(user_a, monkeypatch):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
 
     monkeypatch.setattr(agent_service, "api_key", "fake-key")
     chat = _FlakyFakeChat(ValueError("bad arguments"), FakeResponse(parts=[FakePart()], text="should never get here"))

@@ -17,6 +17,53 @@ import httpx
 from fastapi import Header, HTTPException, status
 from pydantic import BaseModel
 
+try:
+    import firebase_admin
+    from firebase_admin import auth as firebase_auth, credentials
+
+    if not firebase_admin._apps:
+        cred_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH") or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if cred_path and os.path.exists(cred_path):
+            firebase_admin.initialize_app(credentials.Certificate(cred_path))
+        elif os.getenv("FIREBASE_PROJECT_ID"):
+            firebase_admin.initialize_app(options={"projectId": os.getenv("FIREBASE_PROJECT_ID")})
+        else:
+            # Default initialization if environment credentials are present
+            try:
+                firebase_admin.initialize_app()
+            except Exception:
+                pass
+    _FIREBASE_INITIALIZED = bool(firebase_admin._apps)
+except Exception:
+    _FIREBASE_INITIALIZED = False
+
+# Firebase App Check: "off" (default, local dev), "monitor" (verify + log only), "enforce" (reject).
+APP_CHECK_MODE = os.getenv("FIREBASE_APP_CHECK_MODE", "off").lower()
+app_check_stats = {"verified": 0, "missing": 0, "invalid": 0}
+
+
+def verify_app_check(x_firebase_appcheck: Optional[str] = Header(default=None)) -> Optional[str]:
+    """FastAPI dependency guarding the AI/agent/document endpoints against
+    scripted abuse: the browser attaches a Firebase App Check token
+    (reCAPTCHA Enterprise attested) as X-Firebase-AppCheck."""
+    if APP_CHECK_MODE == "off" or not _FIREBASE_INITIALIZED:
+        return None
+    if not x_firebase_appcheck:
+        app_check_stats["missing"] += 1
+        if APP_CHECK_MODE == "enforce":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="App verification required.")
+        return None
+    try:
+        from firebase_admin import app_check
+        claims = app_check.verify_token(x_firebase_appcheck)
+        app_check_stats["verified"] += 1
+        return claims.get("app_id")
+    except Exception:
+        app_check_stats["invalid"] += 1
+        if APP_CHECK_MODE == "enforce":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="App verification failed.")
+        return None
+
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
@@ -35,6 +82,24 @@ class CurrentUser(BaseModel):
     id: str
     email: Optional[str] = None
     is_demo: bool = False
+
+
+def _validate_with_firebase(token: str) -> Optional[CurrentUser]:
+    """Validate a Firebase ID token using firebase-admin."""
+    if not _FIREBASE_INITIALIZED:
+        return None
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        uid = decoded.get("uid")
+        if not uid:
+            return None
+        return CurrentUser(
+            id=f"firebase:{uid}",
+            email=decoded.get("email"),
+            is_demo=False,
+        )
+    except Exception:
+        return None
 
 
 def _validate_with_supabase(token: str) -> CurrentUser:
@@ -109,6 +174,13 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> Cur
     if cached and cached[0] > now:
         return cached[1]
 
+    # Try Firebase Auth token verification first if initialized
+    fb_user = _validate_with_firebase(token)
+    if fb_user:
+        _token_cache[token] = (now + _TOKEN_CACHE_TTL_SECONDS, fb_user)
+        return fb_user
+
+    # Fall back to Supabase session validation
     user = _validate_with_supabase(token)
     _token_cache[token] = (now + _TOKEN_CACHE_TTL_SECONDS, user)
     return user

@@ -78,7 +78,7 @@ def test_execution_reaches_failed_state_on_llm_error(user_a, monkeypatch):
         def start_chat(self, history=None):
             raise RuntimeError("boom")
 
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     monkeypatch.setattr(genai, "GenerativeModel", lambda **kwargs: BoomModel())
 
     db = SessionLocal()

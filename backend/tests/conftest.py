@@ -9,6 +9,10 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
 os.environ.setdefault("CORS_ALLOWED_ORIGINS", "http://localhost:5173")
+# Tests must never hit live Google APIs: blank (not unset) so load_dotenv() can't refill them from .env.
+for _k in ("GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GCP_SECRET_NAMES", "BIGQUERY_DATASET", "GCS_BUCKET"):
+    os.environ[_k] = ""
+os.environ["FIREBASE_APP_CHECK_MODE"] = "off"
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -122,7 +126,7 @@ def install_fake_gemini(monkeypatch):
     agent_service and returns the list of raw send_message call args, so a
     test can assert exactly how many times (if any) the "model" was invoked —
     e.g. to prove the safety filter really does short-circuit before Gemini."""
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     from backend.services import agent_service
 
     call_log = []
@@ -174,7 +178,7 @@ def install_fake_gemini_reactive(monkeypatch):
     """Like install_fake_gemini, but takes responder(call_index, payload) -> FakeResponse
     instead of a fixed list — payload is the REAL first message or FunctionResponse
     Content the orchestrator sent, so the test can branch on the actual tool result."""
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     from backend.services import agent_service
 
     call_log = []

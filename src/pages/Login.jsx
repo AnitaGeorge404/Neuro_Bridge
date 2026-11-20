@@ -29,7 +29,20 @@ const ROLES = [
 //  Glassmorphism Login Page — 3-way RBAC
 // ─────────────────────────────────────────────
 export default function Login({ forcedRole = null, hideRoleToggle = false }) {
-  const { login, loginWithEmail, signUpWithEmail } = useAuth();
+  const { login, loginWithEmail, loginWithGoogle, googleSignInAvailable, signUpWithEmail } = useAuth();
+
+  async function handleGoogleSignIn() {
+    setError("");
+    setLoadingRole("google");
+    try {
+      const user = await loginWithGoogle();
+      navigate(getRedirectPath(user), { replace: true });
+    } catch (e) {
+      if (e?.code !== "auth/popup-closed-by-user") setError(e?.message || "Google sign-in failed. Please try again.");
+    } finally {
+      setLoadingRole(null);
+    }
+  }
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -84,7 +97,7 @@ export default function Login({ forcedRole = null, hideRoleToggle = false }) {
     if (user.role === "support" || user.role === "admin") return "/support-dashboard";
     if (user.role === "guardian") return "/guardian-dashboard";
 
-    if (!user?._supabase) return "/onboarding/disorders";
+    if (!user?._supabase && !user?._firebase) return "/onboarding/disorders";
     if (!user?.onboardingCompleted) return "/onboarding/disorders";
     return "/";
   }
@@ -472,6 +485,20 @@ export default function Login({ forcedRole = null, hideRoleToggle = false }) {
                     }
                   </button>
                 </form>
+
+                {googleSignInAvailable && (
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={!!loadingRole}
+                    className="mt-3 w-full rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 transition flex items-center justify-center gap-2"
+                  >
+                    {loadingRole === "google" ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+                      <svg aria-hidden="true" viewBox="0 0 48 48" className="w-4 h-4"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>
+                    )}
+                    Continue with Google
+                  </button>
+                )}
 
                 {/* Divider */}
                 <div className="my-6 flex items-center gap-3">

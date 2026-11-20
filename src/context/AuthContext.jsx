@@ -4,6 +4,7 @@ import { DISORDERS } from "@/lib/disorders";
 import { pushWardNote } from "@/support/stores/careSyncStore";
 import { supabase } from "@/lib/supabaseClient";
 import { clearAllLocalAppData } from "@/lib/clearLocalAppData";
+import { buildProfileFromFirebase, firebaseEnabled, firebaseSignOut, signInWithGoogle } from "@/lib/firebase";
 
 function buildProfileFromSupabase(supabaseUser) {
   const meta = supabaseUser?.user_metadata ?? {};
@@ -390,6 +391,25 @@ export function AuthProvider({ children }) {
     return fullUser;
   }, []);
 
+  // Firebase Authentication (Google Sign-In). The backend verifies the Firebase
+  // ID token with firebase-admin and scopes all data to "firebase:<uid>".
+  const loginWithGoogle = useCallback(async () => {
+    const fbUser = await signInWithGoogle();
+    const profile = buildProfileFromFirebase(fbUser);
+    const persisted = (() => {
+      try {
+        return JSON.parse(localStorage.getItem(`nb_prefs_${profile.id}`) || "{}");
+      } catch {
+        return {};
+      }
+    })();
+    const fullUser = { ...profile, ...persisted, _firebase: true };
+    localStorage.setItem("nb_auth", JSON.stringify(fullUser));
+    setUser(fullUser);
+    setIsAuthenticated(true);
+    return fullUser;
+  }, []);
+
   const signUpWithEmail = useCallback(async (email, password, name, role = "user") => {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -503,6 +523,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     clearAllLocalAppData();
     supabase.auth.signOut().catch(() => {});
+    firebaseSignOut();
     setUser(null);
     setIsAuthenticated(false);
   }, []);
@@ -562,6 +583,8 @@ export function AuthProvider({ children }) {
     updateDisorders,
     login,
     loginWithEmail,
+    loginWithGoogle,
+    googleSignInAvailable: firebaseEnabled,
     signUpWithEmail,
     logout,
     updateUser,

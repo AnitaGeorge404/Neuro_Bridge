@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { listInterventions } from '@/support/persistence/role4Store';
 import { currentStatusLabel, friendlyToolLabel } from '@/lib/agentEvents';
 import { API_BASE_URL, backendAuthHeaders as authHeaders } from '@/lib/backendAuth';
+import { trackEvent } from '@/lib/firebase';
 
 /**
  * Small, explicit snapshot of frontend-only (localStorage-backed) activity —
@@ -229,6 +230,7 @@ const useAgentStore = create((set, get) => ({
         return;
       }
 
+      trackEvent('bri_message_sent', { module: 'agent' });
       const res = await fetch(`${API_BASE_URL}/api/agent/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },

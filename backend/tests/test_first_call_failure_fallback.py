@@ -33,7 +33,7 @@ class _FailFirstCallModel:
 
 
 def _run(user, message, history=None):
-    import google.generativeai as genai
+    from backend.services import genai_compat as genai
     import pytest
 
     mp = pytest.MonkeyPatch()

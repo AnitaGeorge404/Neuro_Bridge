@@ -31,7 +31,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
-import google.generativeai as genai
+from . import genai_compat as genai
+from . import google_ai_service
 from google.api_core.exceptions import DeadlineExceeded, InternalServerError, ServiceUnavailable
 from sqlalchemy.orm import Session
 
@@ -43,18 +44,17 @@ from .agent_state import TERMINAL_STATES, ExecutionState
 from .agent_tools import RiskLevel, Tool, ToolContext, ToolError, ToolTimeoutError
 from .navigation import FEATURE_LABELS, match_navigation_shortcut, resolve_feature_route
 
-MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-3.6-flash")
+MODEL_NAME = google_ai_service.MODEL_FLASH
 MAX_TOOL_ROUNDS = int(os.getenv("AGENT_MAX_STEPS", "4"))
 LLM_TIMEOUT_S = int(os.getenv("AGENT_LLM_TIMEOUT_MS", "15000")) / 1000
 TOOL_TIMEOUT_S = int(os.getenv("AGENT_TOOL_TIMEOUT_MS", "5000")) / 1000
 LEARNINGS_CACHE_TTL_S = int(os.getenv("AGENT_CACHE_TTL_SECONDS", "20"))
 IDEMPOTENCY_WINDOW_S = 120
 
-api_key = os.getenv("GEMINI_API_KEY")
-if api_key:
-    genai.configure(api_key=api_key)
+# Truthy when either the Gemini API key or Vertex AI (service-account auth) is configured.
+api_key = google_ai_service.backend_name()
 
-_TRANSIENT_LLM_ERRORS = (DeadlineExceeded, ServiceUnavailable, InternalServerError, TimeoutError, ConnectionError)
+_TRANSIENT_LLM_ERRORS = (DeadlineExceeded, ServiceUnavailable, InternalServerError) + google_ai_service.TRANSIENT_ERRORS
 _tool_thread_pool = ThreadPoolExecutor(max_workers=8)
 
 # user_id -> (expiry_monotonic, learnings dict). Small, stable, low-stakes data — a

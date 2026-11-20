@@ -30,14 +30,14 @@ echo "✓ Dependencies installed"
 echo ""
 
 # Start Vite dev server in background
-echo "Step 2: Starting Vite Development Server (port 5173)..."
+echo "Step 2: Starting Vite Development Server (port 8080)..."
 npm run dev > /tmp/vite.log 2>&1 &
 VITE_PID=$!
 echo "✓ Vite server started (PID: $VITE_PID)"
 echo ""
 
 # Start Python backend
-echo "Step 3: Starting Flask Backend (port 5000)..."
+echo "Step 3: Starting FastAPI Backend (port 8000)..."
 echo "Setting up Python environment..."
 
 # Check Python
@@ -63,28 +63,26 @@ pip install --quiet -r backend/requirements.txt
 
 echo "✓ Python packages installed"
 
-# Start Flask server in background
-cd backend
-python app.py > /tmp/flask.log 2>&1 &
+# Start FastAPI server in background (from repo root: backend is a package)
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload > /tmp/fastapi.log 2>&1 &
 FLASK_PID=$!
-cd ..
-echo "✓ Flask server started (PID: $FLASK_PID)"
+echo "✓ FastAPI server started (PID: $FLASK_PID)"
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✓ Neurobridge is launching!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "🌐 Frontend:  http://localhost:5173"
-echo "🔌 Backend:   http://localhost:5000"
-echo "📊 Health:    http://localhost:5000/api/health"
+echo "🌐 Frontend:  http://localhost:8080"
+echo "🔌 Backend:   http://localhost:8000"
+echo "📊 Health:    http://localhost:8000/api/health"
 echo ""
 echo "Vite process ID:  $VITE_PID"
-echo "Flask process ID: $FLASK_PID"
+echo "API process ID: $FLASK_PID"
 echo ""
 echo "Logs:"
 echo "  Vite:  tail -f /tmp/vite.log"
-echo "  Flask: tail -f /tmp/flask.log"
+echo "  Flask: tail -f /tmp/fastapi.log"
 echo ""
 echo "To stop both servers:"
 echo "  kill $VITE_PID $FLASK_PID"

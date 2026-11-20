@@ -110,3 +110,20 @@ class InterventionOutcome(Base):
     rating = Column(Integer, nullable=True)
     meta = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AgentConversationState(Base):
+    """Bri V2 short-term conversational state (one row per conversation).
+
+    Holds ONLY what's needed to understand follow-ups ("yes", "the first one",
+    "I finished it"): the pending offer/choice/action, the active task, the
+    last action, rejected approaches. Never diagnoses or inferred traits.
+    Deleted with the conversation (privacy delete) and exported with it.
+    """
+
+    __tablename__ = "agent_conversation_states"
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("agent_conversations.id"), unique=True, index=True, nullable=False)
+    user_id = Column(String, index=True, nullable=False)
+    state = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -29,7 +29,8 @@ from sqlalchemy.orm import Session
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
-from ..models import adhd_models, agent_models, anxiety_models, asd_models, ocd_models
+from ..models import adhd_models, agent_models, anxiety_models, asd_models, google_models, ocd_models
+from ..services import firebase_service
 
 router = APIRouter()
 
@@ -107,8 +108,10 @@ def export_my_data(db: Session = Depends(get_db), user: CurrentUser = Depends(ge
             "conversations": [_row_to_dict(r) for r in db.query(agent_models.AgentConversation).filter_by(user_id=user.id).all()],
             "messages": [_row_to_dict(r) for r in messages],
             "learnings": [_row_to_dict(r) for r in db.query(agent_models.AgentLearning).filter_by(user_id=user.id).all()],
+            "conversation_states": [_row_to_dict(r) for r in db.query(agent_models.AgentConversationState).filter_by(user_id=user.id).all()],
             "action_logs": [_row_to_dict(r) for r in db.query(agent_models.AgentActionLog).filter_by(user_id=user.id).all()],
             "intervention_outcomes": [_row_to_dict(r) for r in db.query(agent_models.InterventionOutcome).filter_by(user_id=user.id).all()],
+            "documents": [_row_to_dict(r) for r in db.query(google_models.StoredDocument).filter_by(user_id=user.id).all()],
         },
     }
 
@@ -159,6 +162,9 @@ def _delete_all_backend_data(db: Session, user_id: str) -> dict:
         db.query(asd_models.RoutineStep).filter_by(user_id=user_id).delete(synchronize_session=False)
     )
 
+    deleted["agent_conversation_states"] = (
+        db.query(agent_models.AgentConversationState).filter_by(user_id=user_id).delete(synchronize_session=False)
+    )
     if conversation_ids:
         deleted["agent_messages"] = (
             db.query(agent_models.AgentMessage)
@@ -179,6 +185,10 @@ def _delete_all_backend_data(db: Session, user_id: str) -> dict:
     )
 
     db.commit()
+    deleted["documents"] = db.query(google_models.StoredDocument).filter_by(user_id=user_id).delete(synchronize_session=False)
+    deleted["semantic_memory"] = db.query(google_models.SemanticMemory).filter_by(user_id=user_id).delete(synchronize_session=False)
+    if not user_id.startswith("demo:"):
+        deleted.update(firebase_service.delete_user_data(user_id))
     return deleted
 
 

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Sun, Moon, Coffee, Crosshair, Tag, Brain, CalendarDays, ClipboardList, Heart, Leaf, Play, SlidersHorizontal, Sparkles, Target, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { trackEvent } from '@/lib/firebase';
 import SupportToolThemeProvider from "@/theme/SupportToolThemeProvider";
 import SupportToolLayout from "@/components/support/SupportToolLayout";
 import { useInterventionLifecycle } from '@/support/execution';
@@ -498,6 +499,7 @@ const FocusSessions = () => {
       const started = await lifecycle.start();
       if (!started.ok) return;
     }
+    trackEvent('focus_session_started', { module: 'adhd', duration_minutes: blockMinutes });
     setPhase('running');
   };
 
