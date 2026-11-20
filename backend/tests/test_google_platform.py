@@ -39,7 +39,7 @@ def _install_fake_ai(monkeypatch):
 def test_compat_converts_tools_to_google_genai_function_declarations():
     tools = genai_compat._to_tools(build_gemini_tool_declarations())
     names = {d.name for d in tools[0].function_declarations}
-    assert names == set(TOOL_REGISTRY)
+    assert names == {n for n, t in TOOL_REGISTRY.items() if not getattr(t, "v2_only", False)}
     assert "search_my_documents" in names
 
 

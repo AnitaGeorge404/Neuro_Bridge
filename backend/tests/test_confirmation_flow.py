@@ -145,7 +145,9 @@ def test_full_confirmation_chain_request_propose_confirm_revalidate_write(login_
 
     client = login_as(user_a)
 
-    chat_response = client.post("/api/agent/chat", json={"message": "break down my essay task"})
+    # Not an explicit "break it down" request, so Bri V2's policy still requires confirmation
+    # (an explicit request now executes directly — see test_bri_v2.py).
+    chat_response = client.post("/api/agent/chat", json={"message": "I need to finish my essay"})
     assert chat_response.status_code == 200
     chat_body = chat_response.json()
     assert chat_body["action_payload"]["type"] == "PENDING_CONFIRMATION"
