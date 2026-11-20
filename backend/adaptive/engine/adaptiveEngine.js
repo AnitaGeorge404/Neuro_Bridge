@@ -51,7 +51,7 @@ import {
 } from "@/support/schemas/supportSchemas";
 import { isNonNullObject } from "@/adaptive/context/contextSnapshot.js";
 import { safetyGate } from "./safetyGate.js";
-import { runHysteresisStage } from "./hysteresis.js";
+import { runHysteresisStage, stabilizeCandidates } from "./hysteresis.js";
 import { resolveConflicts } from "./conflictResolution.js";
 import { applyUserPreferences } from "./preferences.js";
 import { recommendFocusConfiguration } from "../reasoning/focusConfiguration.js";
@@ -360,14 +360,29 @@ export function decide(input = {}, options = {}) {
       ? normalized.role4Signals.strategyEffectiveness
       : undefined,
   );
-  const { triggered } = evaluatePolicies(rules, policyState);
+  // Evidence-grounded evaluation: rules whose trigger values matched but whose
+  // evidence was stale or too weak are returned as `suppressed` and recorded
+  // in the trace; they never reach the plan.
+  const { triggered, suppressed: evidenceSuppressed = [] } = evaluatePolicies(rules, policyState);
   const focusRecommendation = recommendFocusConfiguration(normalized.role4Signals?.supportEvidence);
   const learnedFocusEntry = context?.moduleId === "support.focus_session" && focusRecommendation
     ? [{ ruleId: "role4.focus_configuration", version: 1, scope: "user", tier: 9, priority: 0, confidence: focusRecommendation.confidence, action: { type: "MODIFY", target: "PACING", parameters: { focusConfiguration: focusRecommendation } }, matchedTriggers: [], reversal: "auto" }]
     : [];
 
+  // ── 3b TEMPORAL STABILITY (Task 2) — consult recent adaptation state before
+  // precedence is applied: reinstate still-valid incumbents (maintained on
+  // weaker evidence / held through brief contradiction), withdraw those whose
+  // evidence is lost, and defer unconfirmed challengers to a supported mode.
+  // Reinstated entries still pass restriction, conflict, preference and safety.
+  const temporal = stabilizeCandidates(
+    { triggered, suppressed: evidenceSuppressed, rules, userState: policyState },
+    { now, userId, moduleId: context?.moduleId, reasoningConfidence: reasoning.confidence },
+  );
+  const maintainedIds = new Set(temporal.maintainedIds);
+  const reportedSuppressed = evidenceSuppressed.filter((entry) => !maintainedIds.has(entry.ruleId));
+
   // Hard module boundary: restricted dimensions are never adapted.
-  const restricted = applyRestrictedDimensions([...triggered, ...learnedFocusEntry], context);
+  const restricted = applyRestrictedDimensions([...temporal.entries, ...learnedFocusEntry], context);
 
   // ── 4 CONFLICT (D4) — per-target, highest-precedence candidate wins ──
   const conflict = resolveConflicts(restricted.kept);
@@ -383,11 +398,25 @@ export function decide(input = {}, options = {}) {
   const safety = runSafetyStage(preference.entries, context, options.safety ?? safetyGate);
 
   // ── 7 HYSTERESIS (D6) — per (user, module, target) state; safety first ──
+  // Why an active adaptation disappeared before the hysteresis stage (trace).
+  const droppedBy = {};
+  const markDropped = (list, stage) => {
+    for (const entry of list) {
+      if (entry?.ruleId && droppedBy[entry.ruleId] === undefined) droppedBy[entry.ruleId] = stage;
+    }
+  };
+  markDropped(restricted.rejected, "a module-restricted dimension");
+  markDropped(conflict.rejected, "conflict resolution (higher-precedence candidate)");
+  markDropped(preference.dropped, "an explicit user preference");
+  markDropped(safety.blocked, "the safety stage");
+
   const hysteresis = runHysteresisStage(safety.kept, {
     now: () => now,
     reasoningConfidence: reasoning.confidence,
     userId,
     moduleId: context?.moduleId,
+    temporal,
+    droppedBy,
   });
 
   // ── 8 PLAN (existing Phase 2 planner) ──
@@ -429,13 +458,26 @@ export function decide(input = {}, options = {}) {
 
   // ── 9 TRACE (structural linkage only; no persistence) ──
   const rejectedEntries = [
+    ...reportedSuppressed,
     ...restricted.rejected,
     ...conflict.rejected,
     ...preference.dropped,
     ...safety.blocked,
     ...hysteresis.rejected,
   ];
-  const overrides = [...preference.overrides, ...safety.overrides, ...hysteresis.overrides];
+  const evidenceOverrides = reportedSuppressed.map((entry) => ({
+    kind: "evidence",
+    applied: false,
+    detail: `rule "${entry.ruleId}" not applied: ${entry.evidenceReason}${
+      typeof entry.confidence === "number" ? ` (confidence ${entry.confidence})` : ""
+    }`,
+  }));
+  const overrides = [
+    ...evidenceOverrides,
+    ...preference.overrides,
+    ...safety.overrides,
+    ...hysteresis.overrides,
+  ];
 
   // Spec §5 availability rules: the trace records which optional input
   // fragments were present at runtime (role4Signals / userPreferences).

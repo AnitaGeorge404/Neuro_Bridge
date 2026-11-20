@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, useMemo } 
 import { resolveEnabledFeatures } from "@/lib/featureRegistry";
 import { DISORDERS } from "@/lib/disorders";
 import { pushWardNote } from "@/support/stores/careSyncStore";
-import { supabase } from "@/lib/supabaseClient";
+import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
 import { clearAllLocalAppData } from "@/lib/clearLocalAppData";
 import { buildProfileFromFirebase, firebaseEnabled, firebaseSignOut, signInWithGoogle } from "@/lib/firebase";
 
@@ -411,6 +411,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signUpWithEmail = useCallback(async (email, password, name, role = "user") => {
+    if (!isSupabaseConfigured) {
+      throw new Error("Account signup is not configured. Please contact the NeuroBridge administrator.");
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -419,7 +423,7 @@ export function AuthProvider({ children }) {
       },
     });
 
-    if (error) throw new Error(error.message);
+    if (error) throw error;
 
     if (data.user && data.user.identities?.length === 0) {
       throw new Error("An account with this email already exists. Please sign in.");
