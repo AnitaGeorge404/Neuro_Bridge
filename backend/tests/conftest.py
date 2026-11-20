@@ -4,7 +4,7 @@ import uuid
 
 # Point the backend at an isolated, throwaway SQLite file *before* importing
 # any backend module (backend/database.py reads DATABASE_URL at import time).
-_TEST_DB_PATH = os.path.join(os.path.dirname(__file__), "test_agent.db")
+_TEST_DB_PATH = os.getenv("NB_TEST_DB") or os.path.join(os.path.dirname(__file__), "test_agent.db")  # override to run suites in parallel
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")

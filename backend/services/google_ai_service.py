@@ -3,8 +3,8 @@ Modern Google GenAI Service for NeuroBridge.
 Powered by the official `google-genai` SDK.
 
 Supports:
-- Gemini 2.5 Flash for rapid agentic reasoning & function calling
-- Gemini 2.5 Pro for deep academic syllabus/assignment decomposition
+- Gemini Flash (configurable chain with logged fallback) for Bri reasoning & function calling
+- Gemini multimodal for syllabus/assignment decomposition
 - Gemini Multimodal Vision for OCR, assignment parsing, and dyslexia reading simplification
 - Vertex AI Text Embeddings for semantic strategy and preference retrieval
 - Configurable switching between Google AI Studio and Google Cloud Vertex AI
@@ -31,8 +31,14 @@ from . import google_cloud
 
 # Centralized Model Registry — GEMINI_MODEL_NAME is the single knob the agent,
 # OCD helpers and document pipeline all share.
-MODEL_FLASH = os.getenv("GEMINI_MODEL_NAME") or os.getenv("GEMINI_FLASH_MODEL") or "gemini-3.8-flash"
-MODEL_PRO = os.getenv("GEMINI_PRO_MODEL", "gemini-3.8-flash")  # multimodal; 2.5-pro closed to new users
+# Defaults were checked live on 2026-11-20: 2.5 models are closed to new users;
+# gemini-3.5-flash-lite and gemini-3.1-flash-lite are responsive (<2s) while 3.8/3.5-flash
+# can experience transient demand spikes (503/504).
+MODEL_FLASH = os.getenv("GEMINI_MODEL_NAME") or os.getenv("GEMINI_FLASH_MODEL") or "gemini-3.5-flash-lite"
+MODEL_PRO = os.getenv("GEMINI_PRO_MODEL") or MODEL_FLASH  # document analysis (multimodal)
+# Tried in order when the chosen model is overloaded/unavailable. Every switch is logged.
+FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3.8-flash").split(",") if m.strip()]
+_CLIENT_TIMEOUT_MS = int(os.getenv("GEMINI_CLIENT_TIMEOUT_MS", "60000"))
 MODEL_EMBEDDING = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
 _TIMEOUT_SECONDS = float(os.getenv("AGENT_LLM_TIMEOUT_MS", "15000")) / 1000.0
@@ -73,13 +79,14 @@ def get_genai_client() -> Optional[genai.Client]:
     if use_vertex():
         key = ("vertex", _vertex_project(), os.getenv("VERTEX_AI_LOCATION", "us-central1"))
         if key not in _client_cache:
-            _client_cache[key] = genai.Client(vertexai=True, project=key[1], location=key[2])
+            _client_cache[key] = genai.Client(vertexai=True, project=key[1], location=key[2],
+                                              http_options=types.HttpOptions(timeout=_CLIENT_TIMEOUT_MS))
         return _client_cache[key]
     api_key = os.getenv("GEMINI_API_KEY")
     if api_key:
         key = ("api", api_key)
         if key not in _client_cache:
-            _client_cache[key] = genai.Client(api_key=api_key)
+            _client_cache[key] = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=_CLIENT_TIMEOUT_MS))
         return _client_cache[key]
     return None
 
@@ -100,6 +107,39 @@ def observe(operation: str, model: str):
             "ai_call", tool=operation, model=model, status=status,
             latency_ms=int((time.monotonic() - start) * 1000), source=backend_name(),
         )
+
+
+def model_chain(primary: str) -> list[str]:
+    return [primary] + [m for m in FALLBACK_MODELS if m != primary]
+
+
+def is_model_unavailable(exc: Exception) -> bool:
+    """Overloaded (503), timed out upstream (504), rate limited (429), model retired (404), network/SSL drop or timeout."""
+    if isinstance(exc, genai_errors.ServerError):
+        return True
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError, httpx.NetworkError, ConnectionError)):
+        return True
+    err_str = (str(exc) + " " + type(exc).__name__).lower()
+    if any(k in err_str for k in ("disconnected", "connection", "reset", "deadline", "timeout", "unavailable", "handshake", "ssl", "protocol", "broken")):
+        return True
+    return isinstance(exc, genai_errors.ClientError) and getattr(exc, "code", None) in (404, 429)
+
+
+def call_with_fallback(operation: str, primary: str, fn):
+    """fn(model_name) -> response. Walks model_chain(primary) on unavailability only;
+    real errors (bad request, auth) raise immediately. Returns (response, model_used)."""
+    chain = model_chain(primary)
+    for i, model in enumerate(chain):
+        try:
+            with observe(operation, model):
+                return fn(model), model
+        except Exception as e:
+            if i == len(chain) - 1 or not is_model_unavailable(e):
+                raise
+            google_cloud.log_structured(
+                "gemini model fallback", nb_event="model_fallback", tool=operation,
+                model=model, status=getattr(e, "code", type(e).__name__), source=chain[i + 1],
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -132,8 +172,8 @@ def generate_text(prompt: str, model: str = MODEL_FLASH, system_instruction: Opt
     )
 
     try:
-        with observe("generate_text", model):
-            response = client.models.generate_content(model=model, contents=prompt, config=config)
+        response, _ = call_with_fallback(
+            "generate_text", model, lambda m: client.models.generate_content(model=m, contents=prompt, config=config))
         return response.text or ""
     except Exception as e:
         print(f"[GoogleGenAI] Text generation error: {e}")
@@ -159,8 +199,8 @@ def generate_structured(
     )
 
     try:
-        with observe("generate_structured", model):
-            response = client.models.generate_content(model=model, contents=prompt, config=config)
+        response, _ = call_with_fallback(
+            "generate_structured", model, lambda m: client.models.generate_content(model=m, contents=prompt, config=config))
         raw_json = response.text
         if not raw_json:
             return None
@@ -233,8 +273,8 @@ def analyze_multimodal_document(
     )
 
     try:
-        with observe("analyze_document", MODEL_PRO):
-            response = client.models.generate_content(model=MODEL_PRO, contents=contents, config=config)
+        response, _ = call_with_fallback(
+            "analyze_document", MODEL_PRO, lambda m: client.models.generate_content(model=m, contents=contents, config=config))
         if not response.text:
             return None
         return SyllabusDecompositionResult.model_validate_json(response.text)
