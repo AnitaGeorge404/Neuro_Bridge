@@ -692,8 +692,26 @@ export const HysteresisSchema = z
     deactivationThreshold: confidenceRange,
     cooldownMs: z.number().int().nonnegative(),
     minDurationMs: z.number().int().nonnegative(),
+    // Temporal stability (Task 2, all optional / additive):
+    // entry evidence must persist this long before the adaptation is entered,
+    confirmationMs: z.number().int().nonnegative().optional(),
+    // ...unless it reaches this strength (important changes are not delayed),
+    immediateActivationThreshold: confidenceRange.optional(),
+    // and maintenance on weaker evidence is capped at this long without fresh
+    // entry-level evidence (adaptations never stay active indefinitely).
+    maxDurationMs: z.number().int().positive().optional(),
   })
   .superRefine((hysteresis, ctx) => {
+    if (
+      hysteresis.immediateActivationThreshold !== undefined &&
+      hysteresis.immediateActivationThreshold < hysteresis.activationThreshold
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["immediateActivationThreshold"],
+        message: "immediateActivationThreshold must not be below activationThreshold",
+      });
+    }
     if (
       hysteresis.deactivationThreshold >
       hysteresis.activationThreshold
@@ -752,7 +770,9 @@ export const ConflictRecordSchema = z.object({
 });
 
 export const OverrideRecordSchema = z.object({
-  kind: z.enum(["preference", "safety", "hysteresis"]),
+  // "evidence": a value-matched rule withheld because its supporting
+  // evidence was stale or below the confidence threshold (Task 1).
+  kind: z.enum(["preference", "safety", "hysteresis", "evidence"]),
   actionId: idSchema.optional(),
   applied: z.boolean(),
   detail: z.string().trim().optional(),
