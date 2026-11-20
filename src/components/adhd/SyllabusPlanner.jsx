@@ -123,7 +123,7 @@ export default function SyllabusPlanner({ onTasksSaved }) {
 
       <form onSubmit={search} className="mt-4 flex gap-2" role="search">
         <label htmlFor="syllabus-search" className="sr-only">Search your uploaded courses</label>
-        <input id="syllabus-search" value={query} onChange={(e) => setQuery(e.target.value)}
+        <input id="syllabus-search" type="search" value={query} onChange={(e) => setQuery(e.target.value)}
                placeholder="What's due for my essay class?"
                className="min-w-0 flex-1 rounded-xl border border-[#e4e8f0] px-3 py-2 text-[13px]" />
         <button type="submit" className="rounded-xl border border-[#e4e8f0] px-3 py-2" aria-label="Search">

@@ -324,10 +324,21 @@ const useAgentStore = create((set, get) => ({
     }
   },
 
-  cancelPendingAction: () => {
-    const { addMessage } = get();
+  cancelPendingAction: (user) => {
+    const { addMessage, conversationId } = get();
     addMessage({ role: 'model', content: 'No problem, I left that as-is.', action_payload: null });
     set({ pendingConfirmation: null });
+    // Tell Bri's backend state too (no write happens — it only clears the
+    // proposal), so a later "yes" can never execute the declined action.
+    if (user && conversationId) {
+      authHeaders(user)
+        .then((headers) => fetch(`${API_BASE_URL}/api/agent/tool/decline`, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: conversationId }),
+        }))
+        .catch(() => {}); // best-effort; the backend also drops stale proposals on its own
+    }
   },
 
   loadHistory: async (convId, user) => {

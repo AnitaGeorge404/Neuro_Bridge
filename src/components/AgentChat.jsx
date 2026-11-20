@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useId } from "react";
 import {
   X, Send, Bot, User, Loader2, ArrowRight, CheckCircle2, Clock, Activity,
-  Mic, MicOff, Volume2, VolumeX, AlertCircle, RotateCcw,
+  Mic, MicOff, Volume2, VolumeX, AlertCircle, RotateCcw, AudioLines,
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import useAgentStore from "@/stores/agentStore";
 import useAgentVoice from "@/hooks/useAgentVoice";
+import useGeminiLive from "@/hooks/useGeminiLive";
 import { useAuth } from "@/context/AuthContext";
 import AgentCursor from "@/components/AgentCursor";
 import { findNavTarget } from "@/lib/findNavTarget";
@@ -266,6 +267,9 @@ export default function AgentChat() {
   const statusId = useId();
 
   const voice = useAgentVoice();
+  // Optional real-time voice (Gemini Live). Only shown when the backend reports it
+  // enabled + configured; any failure drops back to this same chat + voice input.
+  const live = useGeminiLive(isAuthenticated ? user : null);
   // Any authenticated "user"-role account can use the agent — a real Supabase
   // session or one of the Demo Access mock logins. Demo mode gets real backend
   // access too (see agentStore.js), just under an isolated demo identity.
@@ -472,7 +476,7 @@ export default function AgentChat() {
         return;
       }
       if (isNegativeConfirmation(text)) {
-        cancelPendingAction();
+        cancelPendingAction(user);
         setInput("");
         return;
       }
@@ -519,7 +523,7 @@ export default function AgentChat() {
           toolName={action.tool_name}
           toolArgs={action.tool_args}
           onConfirm={() => confirmPendingAction(user)}
-          onCancel={cancelPendingAction}
+          onCancel={() => cancelPendingAction(user)}
           isLoading={isLoading}
         />
       );
@@ -649,6 +653,22 @@ export default function AgentChat() {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              {live.available && (
+                <button
+                  onClick={() => {
+                    if (live.active) { live.stop(); return; }
+                    if (voice.isListening) voice.cancelListening();
+                    if (voice.isSpeaking) voice.stopSpeaking();
+                    live.start();
+                  }}
+                  className={`transition-colors p-1.5 rounded-md hover:bg-muted ${live.active ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  aria-pressed={live.active}
+                  aria-label={live.active ? "End live voice conversation" : "Start live voice conversation"}
+                  title={live.active ? `Live voice: ${live.state}` : "Talk with Bri live"}
+                >
+                  <AudioLines className={`w-4 h-4 ${live.active ? "animate-pulse" : ""}`} />
+                </button>
+              )}
               {voice.ttsSupported && (
                 <>
                   {voice.isSpeaking && (
@@ -790,6 +810,13 @@ export default function AgentChat() {
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+
+            {live.notice && (
+              <div role="status" className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{live.notice}</span>
               </div>
             )}
 
