@@ -196,9 +196,9 @@ export default function GuidedBreathingIntervention({ onComplete, onCancel, auto
   }
 
   return (
-    <div className="rounded-2xl bg-white border border-[#C7D2FE] p-6 sm:p-8 space-y-6 shadow-[6px_6px_0_#DDE8FC]">
+      <div className="rounded-2xl bg-white border border-[#C7D2FE] p-4 space-y-5 shadow-[6px_6px_0_#DDE8FC] sm:p-8 sm:space-y-6">
       {/* Header with Mode Switcher */}
-      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-xl bg-[#DDE8FC] text-[#4F6BF6] flex items-center justify-center">
             <Wind size={18} />
@@ -208,14 +208,14 @@ export default function GuidedBreathingIntervention({ onComplete, onCancel, auto
             <p className="text-xs text-[#6B7BA8]">Follow the rhythm to center your body</p>
           </div>
         </div>
-        <div className="flex rounded-xl bg-[#F0F4FF] p-1 border border-[#C7D2FE]">
+          <div className="grid grid-cols-2 rounded-xl bg-[#F0F4FF] p-1 border border-[#C7D2FE]">
           <button
             type="button"
             onClick={() => {
               setMode("box");
               handleRestart();
             }}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+            className={`min-h-[44px] px-2 py-1 rounded-lg text-xs font-bold transition-all ${
               mode === "box" ? "bg-[#4F6BF6] text-white shadow-sm" : "text-[#6B7BA8] hover:text-[#1E2A5E]"
             }`}
           >
@@ -227,7 +227,7 @@ export default function GuidedBreathingIntervention({ onComplete, onCancel, auto
               setMode("relax");
               handleRestart();
             }}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+            className={`min-h-[44px] px-2 py-1 rounded-lg text-xs font-bold transition-all ${
               mode === "relax" ? "bg-[#4F6BF6] text-white shadow-sm" : "text-[#6B7BA8] hover:text-[#1E2A5E]"
             }`}
           >
@@ -237,7 +237,7 @@ export default function GuidedBreathingIntervention({ onComplete, onCancel, auto
       </div>
 
       {/* Animated Breathing Orb */}
-      <div className="h-52 rounded-2xl bg-[#F0F4FF] border border-[#C7D2FE] flex flex-col items-center justify-center p-4 relative overflow-hidden">
+        <div className="h-48 rounded-2xl bg-[#F0F4FF] border border-[#C7D2FE] flex flex-col items-center justify-center p-4 relative overflow-hidden sm:h-52">
         <div
           className="w-36 h-36 rounded-full border-4 border-[#4F6BF6]/40 bg-[#4F6BF6]/10 flex flex-col items-center justify-center transition-all duration-1000 ease-in-out shadow-inner"
           style={{ transform: `scale(${running ? scale : 1})` }}
@@ -294,7 +294,7 @@ export default function GuidedBreathingIntervention({ onComplete, onCancel, auto
       </div>
 
       {/* Cancel / Restart options */}
-      <div className="flex items-center justify-between pt-1">
+        <div className="flex min-h-[44px] items-center justify-between pt-1">
         <button
           type="button"
           onClick={handleRestart}

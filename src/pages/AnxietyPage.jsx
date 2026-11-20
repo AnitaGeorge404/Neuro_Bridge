@@ -24,8 +24,8 @@ const anxietyInterventions = [
     badge: "Box & 4-7-8",
     color: "from-[#93C5FD] to-[#60A5FA]",
     border: "border-[#bfdbfe]",
-    bg: "from-white via-[#f0f7ff] to-[#e8f1ff]",
-    accent: "text-[#3B82F6]",
+    bg: "from-white via-[#f0f7ff] to-[#e8f1ff] dark:from-[#182341] dark:via-[#1b2a4d] dark:to-[#22365f]",
+    accent: "text-[#1D4ED8] dark:text-[#BFDBFE]",
     hint: "1 minute can help",
   },
   {
@@ -36,8 +36,8 @@ const anxietyInterventions = [
     badge: "Senses Check",
     color: "from-[#86EFAC] to-[#34D399]",
     border: "border-[#bbf7d0]",
-    bg: "from-white via-[#f0fdf4] to-[#e8faf0]",
-    accent: "text-[#10B981]",
+    bg: "from-white via-[#f0fdf4] to-[#e8faf0] dark:from-[#172b28] dark:via-[#1b332e] dark:to-[#214139]",
+    accent: "text-[#047857] dark:text-[#6EE7B7]",
     hint: "Body knows the way",
   },
   {
@@ -48,8 +48,8 @@ const anxietyInterventions = [
     badge: "Sanctuary",
     color: "from-[#C4B5FD] to-[#A78BFA]",
     border: "border-[#ddd6fe]",
-    bg: "from-white via-[#f5f3ff] to-[#ede9fe]",
-    accent: "text-[#7C3AED]",
+    bg: "from-white via-[#f5f3ff] to-[#ede9fe] dark:from-[#292040] dark:via-[#332750] dark:to-[#403064]",
+    accent: "text-[#6D28D9] dark:text-[#DDD6FE]",
     hint: "Zero pressure",
   },
 ];
@@ -69,14 +69,15 @@ function CalmCornerGlow({ bg }) {
 
 function CalmMiniCard({ id, icon: Icon, label, description, color, border, bg, accent, hint, badge, onLaunch, index, reduced, gentle, recommended }) {
   return (
-    <motion.div
+    <motion.button
+      type="button"
       initial={{ opacity: 0, y: reduced ? 0 : 18 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.2 }}
       transition={{ duration: gentle ? 0.35 : 0.5, delay: reduced ? 0 : index * 0.09, ease: "easeOut" }}
       whileHover={reduced ? undefined : { y: -6 }}
       onClick={() => onLaunch(id)}
-      className={`group relative overflow-hidden rounded-[28px] border ${border} bg-gradient-to-br ${bg} p-5 shadow-[3px_3px_0_#e0e7ff] transition-shadow duration-200 hover:shadow-[5px_5px_0_#ddd6fe] cursor-pointer flex flex-col justify-between`}
+      className={`anxiety-intervention-card group relative flex min-h-[172px] w-full flex-col justify-between overflow-hidden rounded-[24px] border ${border} bg-gradient-to-br ${bg} p-4 text-left shadow-[3px_3px_0_#e0e7ff] transition-shadow duration-200 hover:shadow-[5px_5px_0_#ddd6fe] dark:border-[#46557d] dark:shadow-none sm:min-h-[196px] sm:rounded-[28px] sm:p-5`}
     >
       <CalmCornerGlow bg={color} />
       <div className="relative z-10 space-y-3">
@@ -84,25 +85,25 @@ function CalmMiniCard({ id, icon: Icon, label, description, color, border, bg, a
           <div className={`grid h-[44px] w-[44px] place-items-center rounded-full text-white shadow-[0_5px_12px_rgba(50,50,100,.14)] bg-gradient-to-br ${color}`}>
             <Icon size={22} strokeWidth={2.2} className="relative z-10" />
           </div>
-          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-white/80 text-[#1E2A5E] border border-[#C7D2FE]">
+          <span className="rounded-full border border-[#C7D2FE] bg-white/90 px-2.5 py-0.5 text-[11px] font-bold text-[#1E2A5E] dark:border-[#6474a3] dark:bg-[#202b4a] dark:text-[#EEF2FF]">
             {recommended ? "Recommended" : badge}
           </span>
         </div>
         <div>
-          <h3 className="text-[18px] font-black tracking-[-0.03em] text-[#1E2A5E]">{label}</h3>
-          <p className="mt-1 text-[13px] leading-[1.5] text-[#6B7BA8]">{description}</p>
+          <h3 className="text-[17px] font-black tracking-[-0.03em] text-[#1E2A5E] dark:text-[#F8FAFC] sm:text-[18px]">{label}</h3>
+          <p className="mt-1 text-[13px] leading-[1.45] text-[#4E5E88] dark:text-[#D7E0F3]">{description}</p>
         </div>
       </div>
-      <div className="relative z-10 mt-4 pt-3 border-t border-black/5 flex items-center justify-between">
-        <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#8B95B8]">
+      <div className="relative z-10 mt-3 flex min-h-[44px] items-center justify-between border-t border-black/10 pt-2 dark:border-white/15">
+        <p className="flex items-center gap-1.5 text-[12px] font-medium text-[#536285] dark:text-[#C5D0E8]">
           <span className="h-1.5 w-1.5 rounded-full bg-[#4F6BF6]" />
           {hint}
         </p>
-        <span className={`text-xs font-bold ${accent} flex items-center gap-1 group-hover:gap-1.5 transition-all`}>
+        <span className={`flex min-h-[44px] items-center gap-1 rounded-xl bg-white/80 px-3 text-xs font-bold ${accent} transition-all group-hover:gap-1.5 dark:bg-black/20`}>
           Start <ArrowRight size={13} />
         </span>
       </div>
-    </motion.div>
+    </motion.button>
   );
 }
 
@@ -176,25 +177,25 @@ export default function AnxietyPage() {
   return (
     <SupportToolThemeProvider theme="anxiety_calm">
       <SupportToolLayout title="Calming Support" description="Gentle, adaptive anxiety support — zero pressure, just calm.">
-        <main className="min-h-screen bg-[#f0f4ff] text-[#1E2A5E]">
-          <div className="mx-auto w-full max-w-[1240px] px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+        <main className="min-h-screen bg-[#f0f4ff] text-[#1E2A5E] dark:bg-[#11182D] dark:text-[#EEF2FF]">
+          <div className="mx-auto w-full max-w-[1240px] px-1 py-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-8 lg:px-10 lg:py-12">
 
             {/* ── Hero Header with Mascot ── */}
             <motion.header
               variants={heroVariants}
               initial="hidden"
               animate="visible"
-              className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_390px]"
+              className="grid items-center gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_390px]"
             >
               <div>
                 <motion.p variants={itemVariants} className="text-[11px] font-black uppercase tracking-[0.16em] text-[#4F6BF6] flex items-center gap-2">
                   <Sparkles size={15} className={reduced ? "" : "nb-twinkle"} /> Calming Support
                 </motion.p>
-                <motion.h1 variants={itemVariants} className="mt-3 max-w-[760px] text-[46px] font-black leading-[1] tracking-[-0.055em] text-[#1E2A5E] sm:text-[58px] lg:text-[64px]">
+                <motion.h1 variants={itemVariants} className="mt-2 max-w-[760px] text-[40px] font-black leading-[1] tracking-[-0.055em] text-[#1E2A5E] sm:mt-3 sm:text-[58px] lg:text-[64px]">
                   Calm & <span className="bg-gradient-to-r from-[#4F6BF6] to-[#A5B4FC] bg-clip-text text-transparent">Kind</span>
                 </motion.h1>
                 <span className="sr-only">Calm and Kind</span>
-                <motion.p variants={itemVariants} className="mt-5 max-w-[610px] text-[17px] leading-[1.55] text-[#6B7BA8] sm:text-[19px]">
+                <motion.p variants={itemVariants} className="mt-4 max-w-[610px] text-[16px] leading-[1.55] text-[#6B7BA8] sm:mt-5 sm:text-[19px]">
                   A gentle space that adapts to how you're doing — always kind, never in the way.
                 </motion.p>
                 <motion.div variants={itemVariants}>
@@ -224,7 +225,7 @@ export default function AnxietyPage() {
               initial={{ opacity: 0, y: reduced ? 0 : 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: gentle ? 0.35 : 0.55, ease: "easeOut", delay: 0.15 }}
-              className="mt-8 rounded-[22px] border border-[#c7d2fe] bg-[#f0f4ff] p-5 shadow-[3px_3px_0_#dde8fc] flex items-center gap-4"
+              className="mt-6 rounded-[22px] border border-[#c7d2fe] bg-[#f0f4ff] p-4 shadow-[3px_3px_0_#dde8fc] flex items-start gap-3 sm:mt-8 sm:items-center sm:gap-4 sm:p-5"
             >
               <div className="grid h-[44px] w-[44px] place-items-center rounded-full bg-[#4F6BF6]/10 text-[#4F6BF6] shrink-0">
                 <Heart size={22} />
@@ -242,20 +243,20 @@ export default function AnxietyPage() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.15 }}
               transition={{ duration: gentle ? 0.35 : 0.5, ease: "easeOut" }}
-              className="mt-10"
+              className="mt-8 sm:mt-10"
             >
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[#1E2A5E] flex items-center gap-2">
+                  <h2 className="flex items-center gap-2 text-xl font-bold tracking-tight text-[#1E2A5E] dark:text-[#F8FAFC] sm:text-2xl">
                     <Sparkles className="text-[#4F6BF6]" size={22} /> Interactive Anxiety Support
                   </h2>
-                  <p className="text-xs sm:text-sm text-[#6B7BA8] mt-0.5">
+                  <p className="mt-0.5 text-xs text-[#4E5E88] dark:text-[#D7E0F3] sm:text-sm">
                     Direct interactive grounding and breathing interventions.
                   </p>
                 </div>
               </div>
 
-              <div className="grid gap-5 sm:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-3 sm:gap-5">
                 {orderedInterventions.map((card, i) => (
                   <CalmMiniCard
                     key={card.id}
@@ -276,13 +277,13 @@ export default function AnxietyPage() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, amount: 0.12 }}
               transition={{ duration: gentle ? 0.35 : 0.5, ease: "easeOut", delay: 0.08 }}
-              className="mt-10"
+              className="mt-8 sm:mt-10"
             >
               <AdaptiveAnxietyEngine />
             </motion.section>
 
             {/* ── Sensory Settings ── */}
-            <div className="mt-8">
+            <div className="mt-6 sm:mt-8">
               <SensorySettings moduleKey="anxiety" />
             </div>
 
@@ -292,7 +293,7 @@ export default function AnxietyPage() {
               whileInView={{ opacity: 1 }}
               viewport={{ once: true }}
               transition={{ duration: 0.6, ease: "easeOut" }}
-              className="mt-6 flex min-h-[68px] items-center justify-center gap-3 rounded-[24px] bg-gradient-to-r from-[#e8edfa] via-[#f0f4ff] to-[#e8f1ff] px-5 text-center text-[14px] text-[#6B7BA8] sm:text-[16px]"
+              className="mt-6 flex min-h-[68px] items-center justify-center gap-2 rounded-[24px] bg-gradient-to-r from-[#e8edfa] via-[#f0f4ff] to-[#e8f1ff] px-4 text-center text-[14px] text-[#6B7BA8] sm:gap-3 sm:px-5 sm:text-[16px]"
             >
               <Heart size={23} strokeWidth={2} className="shrink-0 text-[#818CF8]" />
               <span>You don&apos;t need to feel perfect — just the <strong className="font-black text-[#4F6BF6]">next gentle breath.</strong></span>
