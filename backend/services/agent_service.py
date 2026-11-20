@@ -69,6 +69,7 @@ _TOOL_ACTION_MAP: dict[str, dict] = {
     "start_social_scenario": {"kind": "navigate_from_result"},
     "create_task_breakdown": {"path": "/adhd/breakdown", "card_type": "TASK_BREAKDOWN"},
     "update_task_step": {"path": "/adhd/breakdown", "card_type": "TASK_BREAKDOWN"},
+    "complete_task_step": {"path": "/adhd/breakdown", "card_type": "TASK_BREAKDOWN"},
     "start_grounding_activity": {"path": "/anxiety", "card_type": "GROUNDING_SESSION"},
     "create_exposure": {"path": "/ocd/exposure-hierarchy", "card_type": "EXPOSURE_CREATED"},
     "start_erp_session": {"path": "/ocd/exposure-session", "card_type": "ERP_SESSION_STARTED"},
@@ -231,6 +232,18 @@ def _cached_learnings(user_id: str, db: Session) -> dict:
 
 
 class AgentOrchestrator:
+    # Bri V2 (services/bri_v2) flips this on; V1 never dispatches v2_only tools.
+    allow_v2_tools = False
+
+    def _tool_for_call(self, name: str) -> Optional[Tool]:
+        tool = agent_tools.TOOL_REGISTRY.get(name)
+        if tool and tool.v2_only and not self.allow_v2_tools:
+            return None
+        return tool
+
+    def _tool_declarations(self) -> list[dict]:
+        return agent_tools.build_gemini_tool_declarations()
+
     def __init__(self, db: Session, user: CurrentUser, user_token: Optional[str] = None):
         self.db = db
         self.user = user
@@ -502,7 +515,7 @@ Relevant user context (already retrieved for you — do not re-ask for this):
         write_confirm_calls = []
         other_calls = []
         for call in function_calls:
-            tool = agent_tools.TOOL_REGISTRY.get(call.name)
+            tool = self._tool_for_call(call.name)
             if tool and tool.risk_level == RiskLevel.WRITE_CONFIRM:
                 write_confirm_calls.append(call)
             else:
@@ -673,7 +686,7 @@ Relevant user context (already retrieved for you — do not re-ask for this):
         self._transition(execution, ExecutionState.PLANNING, on_event)
         model = genai.GenerativeModel(
             model_name=MODEL_NAME,
-            tools=agent_tools.build_gemini_tool_declarations(),
+            tools=self._tool_declarations(),
             system_instruction=self._system_prompt(context_bundle),
         )
         gemini_history = [
@@ -823,9 +836,12 @@ Relevant user context (already retrieved for you — do not re-ask for this):
                 self._transition(execution, ExecutionState.CONFIRMATION_REQUIRED, on_event, tool_name=tool.name)
                 break
 
-            read_calls = [c for c in other_calls if agent_tools.TOOL_REGISTRY.get(c.name) and agent_tools.TOOL_REGISTRY[c.name].risk_level == RiskLevel.READ]
-            write_low_calls = [c for c in other_calls if agent_tools.TOOL_REGISTRY.get(c.name) and agent_tools.TOOL_REGISTRY[c.name].risk_level == RiskLevel.WRITE_LOW]
-            unknown_calls = [c for c in other_calls if not agent_tools.TOOL_REGISTRY.get(c.name)]
+            # Anything known and not a read executes sequentially as a write. In V1,
+            # other_calls only ever holds write_low here; V2's policy may additionally
+            # route an explicitly-requested moderate write_confirm tool into this bucket.
+            read_calls = [c for c in other_calls if self._tool_for_call(c.name) and self._tool_for_call(c.name).risk_level == RiskLevel.READ]
+            write_low_calls = [c for c in other_calls if self._tool_for_call(c.name) and self._tool_for_call(c.name).risk_level != RiskLevel.READ]
+            unknown_calls = [c for c in other_calls if not self._tool_for_call(c.name)]
 
             self._transition(execution, ExecutionState.WAITING_FOR_TOOL, on_event)
             outcomes_by_id: dict[int, dict] = {}
