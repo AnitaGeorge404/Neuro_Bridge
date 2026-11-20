@@ -18,7 +18,7 @@ const USER_NAV = [
   { title: "Home",        path: "/",            icon: Sprout,     featureKey: null },
   { title: "Social & Emotional Support",  path: "/asd",         icon: Brain,      featureKey: FEATURES.ASD },
   { title: "Focus Flow",       path: "/adhd",        icon: Zap,        featureKey: FEATURES.ADHD },
-  { title: "Reading Support",  path: "/dyslexia",    icon: BookOpen,   featureKey: FEATURES.DYSLEXIA },
+  { title: "Reading Support",  path: "/dyslexia/adaptive-reading",    icon: BookOpen,   featureKey: FEATURES.DYSLEXIA },
   { title: "Exposure Practice",path: "/ocd",         icon: Shield,     featureKey: FEATURES.OCD },
   { title: "Audio Clarity",    path: "/apd",         icon: Ear,        featureKey: FEATURES.APD },
   { title: "Calming Toolkit",  path: "/anxiety",     icon: Wind,       featureKey: FEATURES.ANXIETY },
