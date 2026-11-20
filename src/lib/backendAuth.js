@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabaseClient";
 import { getAppCheckHeaders, getFirebaseIdToken } from "@/lib/firebase";
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? "" : "http://localhost:8000");
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 const DEMO_SESSION_KEY = "nb_agent_demo_session_id";
 

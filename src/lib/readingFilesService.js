@@ -3,7 +3,7 @@ import {
   extractTextFromFile,
   extractTextFromImage,
   extractTextFromImages,
-  formatTextToParagraphs,
+  structuredDocumentToText,
 } from "@/lib/textExtractor";
 
 export const BUCKET_NAME = "reader-files";
@@ -177,15 +177,15 @@ export async function uploadAndProcessReadingFile({
   saveLocalHistory([initialRecord, ...localHistory]);
 
   // 3. OCR Text Extraction
-  let extractedText = "";
+  let structuredContent = null;
   try {
     if (isMultiPage) {
-      extractedText = await extractTextFromImages(inputFiles, onProgress, user);
+      structuredContent = await extractTextFromImages(inputFiles, onProgress, user);
     } else if (fileType.startsWith("image/")) {
       onProgress?.({ stage: "ocr", message: "Extracting text using Gemini Vision OCR..." });
-      extractedText = await extractTextFromImage(primaryFile, user);
+      structuredContent = await extractTextFromImage(primaryFile, user);
     } else {
-      extractedText = await extractTextFromFile(primaryFile, onProgress, user);
+      structuredContent = await extractTextFromFile(primaryFile, onProgress, user);
     }
   } catch (ocrErr) {
     console.error("OCR Extraction failed:", ocrErr);
@@ -212,7 +212,12 @@ export async function uploadAndProcessReadingFile({
   const completedRecord = {
     ...initialRecord,
     ocr_status: "completed",
-    ocr_text: extractedText,
+    ocr_text: structuredDocumentToText(structuredContent),
+    ocr_structure: structuredContent,
+    metadata: {
+      ...initialRecord.metadata,
+      structured_content: structuredContent,
+    },
     updated_at: new Date().toISOString(),
   };
 
@@ -222,7 +227,12 @@ export async function uploadAndProcessReadingFile({
         .from("reading_files")
         .update({
           ocr_status: "completed",
-          ocr_text: extractedText,
+          ocr_text: structuredDocumentToText(structuredContent),
+          ocr_structure: structuredContent,
+          metadata: {
+            ...initialRecord.metadata,
+            structured_content: structuredContent,
+          },
           updated_at: new Date().toISOString(),
         })
         .eq("id", fileId);

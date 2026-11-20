@@ -8,7 +8,7 @@ import AdaptiveOutcomePanel from "@/components/adaptive/AdaptiveOutcomePanel";
 const ALL_MODES = [
   { featureKey: FEATURES.ASD,         title: "Social & Emotional Support",  subtitle: "Social confidence & emotional understanding", icon: Brain,      color: "bg-mode-asd",         path: "/asd" },
   { featureKey: FEATURES.ADHD,        title: "Focus Flow",       subtitle: "Attention & planning",        icon: Zap,        color: "bg-mode-adhd",        path: "/adhd" },
-  { featureKey: FEATURES.DYSLEXIA,    title: "Reading Support",  subtitle: "Language clarity",            icon: BookOpen,   color: "bg-mode-dyslexia",    path: "/dyslexia" },
+  { featureKey: FEATURES.DYSLEXIA,    title: "Reading Support",  subtitle: "Language clarity",            icon: BookOpen,   color: "bg-mode-dyslexia",    path: "/dyslexia/adaptive-reading" },
   { featureKey: FEATURES.DYSCALCULIA, title: "Number Confidence",subtitle: "Step-by-step math support",   icon: Calculator, color: "bg-mode-dyscalculia", path: "/dyscalculia" },
   { featureKey: FEATURES.OCD,         title: "Exposure Practice",subtitle: "Resilience building tools",    icon: Shield,     color: "bg-mode-ocd",         path: "/ocd" },
   { featureKey: FEATURES.DYSPRAXIA,   title: "Motor Planning",   subtitle: "Coordination routines",        icon: Hand,       color: "bg-mode-dyspraxia",   path: "/dyspraxia" },

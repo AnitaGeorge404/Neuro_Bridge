@@ -35,8 +35,16 @@ from ..services.rate_limiter import SlidingWindowRateLimiter
 router = APIRouter()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-_ALLOWED_MODELS = {"gemini-1.5-flash", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.6-flash"}
-_DEFAULT_MODEL = "gemini-2.5-flash"
+_ALLOWED_MODELS = {
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3.0-flash",
+    "gemini-3.6-flash",
+}
+_DEFAULT_MODEL = os.getenv("GEMINI_OCR_MODEL", "gemini-2.5-flash")
+if _DEFAULT_MODEL not in _ALLOWED_MODELS:
+    _DEFAULT_MODEL = "gemini-2.5-flash"
 
 # Same shared limiter used by ocd_router.py's AI-writing endpoints: these
 # calls cost real Gemini quota/money per request, so an unauthenticated flood
@@ -76,6 +84,13 @@ def generate(request: GenerateRequest, user: CurrentUser = Depends(get_current_u
         # Never forward Google's raw error body to the client — it can echo
         # back request details, and never forward the API key (it's only in
         # the outgoing request's query string, not in Google's response).
-        raise HTTPException(status_code=502, detail="The AI service couldn't process that request.")
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=502,
+                detail=f"The configured Gemini model '{model}' is unavailable. Update the OCR model configuration.",
+            )
+        if response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Gemini is temporarily rate-limited. Please try again shortly.")
+        raise HTTPException(status_code=502, detail="Gemini rejected the request. Check the backend model/API configuration.")
 
     return response.json()
