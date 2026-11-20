@@ -31,8 +31,8 @@ from . import google_cloud
 
 # Centralized Model Registry — GEMINI_MODEL_NAME is the single knob the agent,
 # OCD helpers and document pipeline all share.
-MODEL_FLASH = os.getenv("GEMINI_MODEL_NAME") or os.getenv("GEMINI_FLASH_MODEL") or "gemini-2.5-flash"
-MODEL_PRO = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
+MODEL_FLASH = os.getenv("GEMINI_MODEL_NAME") or os.getenv("GEMINI_FLASH_MODEL") or "gemini-3.8-flash"
+MODEL_PRO = os.getenv("GEMINI_PRO_MODEL", "gemini-3.8-flash")  # multimodal; 2.5-pro closed to new users
 MODEL_EMBEDDING = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 
 _TIMEOUT_SECONDS = float(os.getenv("AGENT_LLM_TIMEOUT_MS", "15000")) / 1000.0

@@ -46,7 +46,7 @@ function init() {
       }
     }
 
-    if (config.measurementId && import.meta.env.VITE_FIREBASE_ANALYTICS !== "false") {
+    if (config.measurementId && import.meta.env.VITE_FIREBASE_ANALYTICS === "true") {
       try {
         const { getAnalytics, isSupported, setAnalyticsCollectionEnabled } = await import("firebase/analytics");
         if (await isSupported()) {
