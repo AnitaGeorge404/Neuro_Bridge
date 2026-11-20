@@ -95,6 +95,7 @@ import {
   extractTextFromImage,
   extractTextFromImages,
   formatTextToParagraphs,
+  getStructuredDocument,
 } from "@/lib/textExtractor";
 import {
   loadReadingProfile,
@@ -111,11 +112,67 @@ import {
   simplifyText,
   getAIDifficultyAnalysis,
 } from "@/lib/dyslexiaDifficultyService";
+import StructuredDocumentReader from "@/components/adaptive/StructuredDocumentReader";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Ephemeral Document Store (In-Memory)
 ───────────────────────────────────────────────────────────────────────────── */
 const EPHEMERAL_DOCS = new Map();
+
+function getReadingBlocks(record) {
+  const structured = getStructuredDocument(record);
+  if (!structured) return [];
+  return structured.pages.flatMap((page) =>
+    page.blocks.map((block) => {
+      if (block.type === "table" && Array.isArray(block.rows)) {
+        return { ...block, text: block.rows.map((row) => row.join(" | ")).join("\n") };
+      }
+      if (block.type === "list" && Array.isArray(block.items)) {
+        return { ...block, text: block.items.map((item) => item.text || "").join("\n") };
+      }
+      if (["image", "illustration", "diagram", "flowchart", "chart", "graph", "math_figure", "screenshot", "visual"].includes(block.type)) {
+        return {
+          ...block,
+          text: block.caption || block.text || `${block.type.replace("_", " ")} visual`,
+        };
+      }
+      return block;
+    }).filter((block) => block.text?.trim()),
+  );
+}
+
+function buildUploadedDoc(record) {
+  const blocks = getReadingBlocks(record);
+  const structured = getStructuredDocument(record);
+  const contentPages = structured?.pages?.map((page) => ({
+    ...page,
+    blocks: page.blocks.map((block) => {
+      if (block.type === "table" && Array.isArray(block.rows)) {
+        return { ...block, text: block.rows.map((row) => row.join(" | ")).join("\n") };
+      }
+      if (block.type === "list" && Array.isArray(block.items)) {
+        return { ...block, text: block.items.map((item) => item.text || "").join("\n") };
+      }
+      return block;
+    }).filter((block) => block.text?.trim() || block.type === "table" || block.assetUrl),
+  })) || [];
+  const paragraphs = blocks.length
+    ? blocks.map((block) => block.text)
+    : formatTextToParagraphs(record.ocr_text);
+  const totalWords = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
+  return {
+    id: record.id,
+    title: record.file_name,
+    sourceLabel: record.source,
+    thumb: record.preview_url || "from-amber-200 via-rose-200 to-sky-200",
+    preview_url: record.preview_url,
+    estimatedMinutes: Math.max(1, Math.ceil(totalWords / 150)),
+    paragraphs,
+    contentBlocks: blocks,
+    contentPages,
+    record,
+  };
+}
 
 
 
@@ -1057,20 +1114,7 @@ function HomeScreen({ onOpenDoc }) {
 
   const openReadingRecord = (record) => {
     if (record.ocr_text) {
-      const paragraphs = formatTextToParagraphs(record.ocr_text);
-      const totalWords = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
-      const estimatedMinutes = Math.max(1, Math.ceil(totalWords / 150));
-
-      EPHEMERAL_DOCS.set(record.id, {
-        id: record.id,
-        title: record.file_name,
-        sourceLabel: record.source,
-        thumb: record.preview_url || "from-amber-200 via-rose-200 to-sky-200",
-        preview_url: record.preview_url,
-        estimatedMinutes,
-        paragraphs,
-        record,
-      });
+      EPHEMERAL_DOCS.set(record.id, buildUploadedDoc(record));
     }
     onOpenDoc(record.id);
   };
@@ -1094,7 +1138,20 @@ function HomeScreen({ onOpenDoc }) {
       openReadingRecord(record);
     } catch (err) {
       setProcessingState(null);
-      setProcessingError(err.message || "Failed to process and store document.");
+      const message = err?.message || "";
+      if (/failed to fetch|network_error|OCR service unreachable|not reachable/i.test(message)) {
+        setProcessingError(
+          "The OCR service is unreachable. Start the NeuroBridge backend on port 8000, then try again.",
+        );
+      } else if (/401|session|sign in/i.test(message)) {
+        setProcessingError("Your session could not authenticate with the OCR service. Sign in again, then retry.");
+      } else if (/429|rate|lot of/i.test(message)) {
+        setProcessingError("The OCR service is temporarily rate-limited. Wait briefly, then try again.");
+      } else if (/configured Gemini model|Gemini rejected|model.*unavailable/i.test(message)) {
+        setProcessingError("The Gemini OCR model configuration is unavailable. Restart the backend after updating it, then retry.");
+      } else {
+        setProcessingError(message || "Failed to process and store document.");
+      }
     }
   };
 
@@ -1599,18 +1656,7 @@ function ReaderScreen({ docId, onBack }) {
     // Fetch persistent document record from Supabase / service by ID
     getReadingFileById(docId, user).then((rec) => {
       if (rec && rec.ocr_text) {
-        const paragraphs = formatTextToParagraphs(rec.ocr_text);
-        const totalWords = paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
-        const loaded = {
-          id: rec.id,
-          title: rec.file_name,
-          sourceLabel: rec.source,
-          thumb: rec.preview_url || "from-amber-200 via-rose-200 to-sky-200",
-          preview_url: rec.preview_url,
-          estimatedMinutes: Math.max(1, Math.ceil(totalWords / 150)),
-          paragraphs,
-          record: rec,
-        };
+        const loaded = buildUploadedDoc(rec);
         EPHEMERAL_DOCS.set(rec.id, loaded);
         setDocState(loaded);
       }
@@ -1664,11 +1710,15 @@ function ReaderScreen({ docId, onBack }) {
   /* Build structured paragraphs with global word indices */
   const structuredParagraphs = useMemo(() => {
     let idx = 0;
-    return (doc?.paragraphs || []).map((para) => {
+    const blocks = doc?.contentBlocks?.length
+      ? doc.contentBlocks
+      : (doc?.paragraphs || []).map((text) => ({ type: "paragraph", text }));
+    return blocks.map((block) => {
+      const para = block.text;
       const words = para.match(/\S+/g) || [];
       const start = idx;
       idx += words.length;
-      return { para, words, startIdx: start, endIdx: idx - 1 };
+      return { ...block, para, words, startIdx: start, endIdx: idx - 1 };
     });
   }, [doc]);
 
@@ -1861,8 +1911,89 @@ function ReaderScreen({ docId, onBack }) {
 
   const isDark = effectivePrefs.darkMode || effectivePrefs.highContrast;
 
+  function renderBlockText(paraObj, paraIndex) {
+    let wIdx = paraObj.startIdx;
+    return paraObj.words.map((word, i) => {
+      const globalIdx = wIdx++;
+      const isActive = globalIdx === currentWordIndex;
+      const diffScore = wordDifficultyScores[globalIdx] || 0;
+      let diffClass = "";
+      if (diffScore === 1) diffClass = "word-difficulty-medium";
+      else if (diffScore === 2) diffClass = "word-difficulty-hard";
+      return (
+        <span
+          key={i}
+          className={cn(
+            "inline transition-all duration-100",
+            isActive && "tts-word-active",
+            diffClass,
+          )}
+          onClick={(event) => {
+            if (diffScore > 0) {
+              event.stopPropagation();
+              handleWordClick(word, globalIdx);
+            } else {
+              setActivePara(paraIndex);
+              setCurrentWordIndex(globalIdx);
+            }
+          }}
+          aria-current={isActive ? "true" : undefined}
+        >
+          {word}{" "}
+        </span>
+      );
+    });
+  }
+
   /* Render a paragraph with per-word TTS highlighting */
   function renderParagraph(paraObj, paraIndex) {
+    const visualTypes = ["image", "illustration", "diagram", "flowchart", "chart", "graph", "math_figure", "screenshot", "visual"];
+    if (visualTypes.includes(paraObj.type)) {
+      return (
+        <motion.figure
+          key={paraObj.startIdx}
+          layout
+          className="mb-6 rounded-xl border border-slate-200/70 bg-white/60 p-3"
+        >
+          {paraObj.assetUrl ? (
+            <img
+              src={paraObj.assetUrl}
+              alt={paraObj.caption || `${paraObj.type.replace("_", " ")} from the document`}
+              className="mx-auto max-h-[520px] max-w-full rounded-lg object-contain"
+            />
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+              Visual identified, but the original asset could not be preserved.
+              {paraObj.caption ? ` ${paraObj.caption}` : ""}
+            </div>
+          )}
+          {(paraObj.caption || paraObj.text) && (
+            <figcaption className="mt-2 text-center text-sm text-slate-600">
+              {paraObj.caption || paraObj.text}
+            </figcaption>
+          )}
+        </motion.figure>
+      );
+    }
+
+    if (paraObj.type === "table" && Array.isArray(paraObj.rows)) {
+      return (
+        <motion.div key={paraObj.startIdx} layout className="mb-6 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-full border-collapse text-sm">
+            <tbody>
+              {paraObj.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className={rowIndex === 0 ? "bg-slate-100" : "odd:bg-white even:bg-slate-50"}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex} className="border border-slate-200 px-3 py-2 align-top">{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </motion.div>
+      );
+    }
+
     let wIdx = paraObj.startIdx;
     const compScore = sentenceComplexity[paraIndex]?.score || 0;
     
@@ -1902,6 +2033,20 @@ function ReaderScreen({ docId, onBack }) {
     let compClass = "";
     if (compScore === 1) compClass = "sentence-complexity-medium";
     else if (compScore === 2) compClass = "sentence-complexity-hard";
+    const isHeading = ["title", "heading", "subheading"].includes(paraObj.type);
+    const isList = paraObj.type === "list";
+    const blockClass = {
+      title: "text-2xl font-bold",
+      heading: "text-xl font-semibold",
+      subheading: "text-lg font-semibold",
+      instruction: "border-l-4 border-amber-400 pl-4 italic",
+      question: "font-medium",
+      subquestion: "pl-5",
+      equation: "font-mono whitespace-pre-wrap",
+      list: "whitespace-pre-wrap",
+      table: "whitespace-pre-wrap font-mono text-sm",
+      page_number: "text-center text-sm text-slate-500",
+    }[paraObj.type] || "";
 
     return (
       <div key={paraObj.startIdx} className="group relative">
@@ -1918,6 +2063,7 @@ function ReaderScreen({ docId, onBack }) {
           layout
           className={cn(
             "mb-6 cursor-pointer rounded-xl p-2 transition-all duration-200 last:mb-0",
+            blockClass,
             prefs.focusMode
               ? isFocused
                 ? "para-focused ring-2 ring-amber-300/30"
@@ -1930,7 +2076,9 @@ function ReaderScreen({ docId, onBack }) {
             setCurrentWordIndex(paraObj.startIdx);
             if (isPlaying) setIsPlaying(false);
           }}
-          aria-label={`Paragraph ${paraIndex + 1}${isFocused ? ", active" : ""}`}
+          role={isHeading ? "heading" : isList ? "list" : undefined}
+          aria-level={isHeading ? String(paraObj.level || (paraObj.type === "title" ? 1 : 2)) : undefined}
+          aria-label={`${paraObj.type.replace("_", " ")} ${paraIndex + 1}${isFocused ? ", active" : ""}`}
         >
           {spans}
         </motion.p>
@@ -2271,9 +2419,32 @@ function ReaderScreen({ docId, onBack }) {
           transition={{ duration: 0.22 }}
           style={readingStyle}
         >
-          {structuredParagraphs.map((paraObj, i) =>
-            renderParagraph(paraObj, i),
-          )}
+          <StructuredDocumentReader
+            pages={doc?.contentPages || []}
+            fallbackBlocks={(doc?.contentBlocks || []).map((block) => block)}
+            readingPreferences={{
+              fontFamily: effectivePrefs.fontFamily,
+              fontSize: effectivePrefs.fontSize,
+              lineHeight: effectivePrefs.lineHeight,
+              letterSpacing: effectivePrefs.letterSpacing,
+              wordSpacing: effectivePrefs.wordSpacing,
+              theme,
+            }}
+            blockIndexFor={(block) => {
+              const exact = block.id
+                ? structuredParagraphs.findIndex((para) => para.id === block.id)
+                : -1;
+              if (exact >= 0) return exact;
+              return structuredParagraphs.findIndex((para) =>
+                para.type === block.type && para.para === (block.text || ""),
+              );
+            }}
+            renderTextBlock={(block, index) =>
+              index >= 0 && structuredParagraphs[index]
+                ? renderBlockText(structuredParagraphs[index], index)
+                : block.text
+            }
+          />
         </motion.div>
 
         {/* Word position slider */}

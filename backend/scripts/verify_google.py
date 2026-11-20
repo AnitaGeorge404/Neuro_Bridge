@@ -14,7 +14,7 @@ import uuid
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv()
 
 results: list[tuple[str, str, str]] = []
 
@@ -53,17 +53,23 @@ PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("FIREBASE_PROJECT_ID") 
 def _gen():
     if not g.is_configured():
         raise _Skip("set GEMINI_API_KEY (or Vertex env)")
-    text = g.generate_text("Reply with exactly: ok")
-    assert text, "empty response"
-    return f"{g.backend_name()} / {g.MODEL_FLASH}: {text.strip()[:30]}"
+    client = g.get_genai_client()
+    r = client.models.generate_content(model=g.MODEL_FLASH, contents="Reply with exactly: ok")
+    assert r.text, "empty response"
+    return f"{g.backend_name()} / {g.MODEL_FLASH}"
 
 
 @check("Gemini structured output")
 def _structured():
     if not g.is_configured():
         raise _Skip("needs Gemini")
-    plan = g.generate_structured("Task: write essay intro", response_schema=g.TaskBreakdownPlan)
-    assert plan and len(plan.steps) > 0, "empty plan"
+    client = g.get_genai_client()
+    from google.genai import types
+    r = client.models.generate_content(
+        model=g.MODEL_FLASH, contents="Task: write essay intro",
+        config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=g.TaskBreakdownPlan),
+    )
+    plan = g.TaskBreakdownPlan.model_validate_json(r.text)
     return f"{len(plan.steps)} steps"
 
 
@@ -90,16 +96,6 @@ def _embed():
     r = client.models.embed_content(model=g.MODEL_EMBEDDING, contents=["focus"],
                                     config=types.EmbedContentConfig(output_dimensionality=768))
     return f"{len(r.embeddings[0].values)} dims"
-
-
-@check("Vector Search")
-def _vector_search():
-    from backend.services import vector_search_service
-    provider = vector_search_service.get_vector_search_provider()
-    if isinstance(provider, vector_search_service.VertexAIVectorSearch):
-        need("GOOGLE_CLOUD_PROJECT", "VERTEX_VECTOR_SEARCH_ENDPOINT_ID")
-        return f"Vertex AI Endpoint: {vector_search_service.VERTEX_VECTOR_SEARCH_ENDPOINT_ID[:12]}..."
-    return "LocalExactVectorSearch (active, zero-cost)"
 
 
 @check("Vertex AI")

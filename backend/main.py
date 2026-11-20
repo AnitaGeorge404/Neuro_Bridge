@@ -1,10 +1,9 @@
-import sys
 import os
 import time
 
 from dotenv import load_dotenv
 
-load_dotenv(override="pytest" not in sys.modules)  # local .env beats stale OS vars; tests keep their blanks
+load_dotenv()
 
 # Google Cloud bootstrap must run before any module reads secrets at import time.
 from .services import google_cloud  # noqa: E402

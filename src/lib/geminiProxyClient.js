@@ -80,7 +80,13 @@ export async function callGeminiProxy({ model, contents, generationConfig, user,
     }
     return { ok: true, data: await response.json() };
   } catch (err) {
-    return { ok: false, error: err?.message || "network_error" };
+    if (err?.name === "TypeError" || /failed to fetch|network/i.test(err?.message || "")) {
+      return {
+        ok: false,
+        error: "OCR service unreachable. The NeuroBridge backend is not reachable.",
+      };
+    }
+    return { ok: false, error: err?.message || "OCR network request failed." };
   }
 }
 

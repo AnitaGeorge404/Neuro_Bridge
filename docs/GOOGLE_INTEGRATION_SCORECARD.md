@@ -1,39 +1,29 @@
 # NeuroBridge — Google Integration Scorecard
 
-> **Updated:** 2026-11-20  
-> **Rule:** `VERIFIED` = a live call to the Google service returned real production data.  
-> **Live Active:** Gemini API is now **LIVE VERIFIED** (Text Generation, Structured Outputs, Bri Function Calling, and 768-dim Embeddings).  
-> **Test Suite:** 262/262 backend tests passing, frontend builds cleanly.
+> Updated 2026-11-20. **VERIFIED = a live call to the Google service returned real data.** Nothing is VERIFIED yet:
+> this machine has no `gcloud`/ADC credentials, no Firebase web config, and the `.env` `GEMINI_API_KEY` is rejected (`API_KEY_INVALID`).
+> TESTED = exercised by automated tests with the Google client faked at its boundary (`backend/tests/test_google_platform.py`).
+> Running `deploy/gcp-setup.ps1` + the Firebase steps in `NEXT_ACTIONS.md` is what flips these to VERIFIED.
 
-| # | Google Technology | Purpose in NeuroBridge | Status | Live Status | Verification / Evidence |
-|---|---|---|---|---|---|
-| **01** | **Gemini API (`google-genai`)** | Bri's primary AI intelligence & reasoning | **VERIFIED** | Live Active | Live text generation on `gemini-3.5-flash-lite`, function calling (`start_focus_session`), structured output (4-step task plan). |
-| **02** | **Firebase Authentication** | Google Sign-In & cryptographically verified identity | **CONNECTED / TESTED** | Blocked on Project | Frontend popup flow (`src/lib/firebase.js`) + backend ID token verification (`backend/auth.py`), user isolation (`firebase:<uid>`). |
-| **03** | **Cloud Firestore** | Cross-device adaptive UI profile & document catalog | **CONNECTED / TESTED** | Blocked on Project | Synced adaptive profile (`/api/google/profile`), document library mirror, privacy export/delete. Fails soft when offline. |
-| **04** | **Firebase App Check** | ReDoS & automated API abuse protection | **CONNECTED / TESTED** | Blocked on Site Key | reCAPTCHA Enterprise provider + `X-Firebase-AppCheck` injection; backend verification with `off/monitor/enforce` modes. |
-| **05** | **Firebase Analytics** | Consent-gated, privacy-conscious telemetry | **CONNECTED** | Blocked on Measurement ID | Strictly consent-gated (`VITE_FIREBASE_ANALYTICS=true`), zero clinical/chat data logged, whitelisted product events only. |
-| **06** | **Google Cloud Storage** | Secure, private student document & syllabus storage | **CONNECTED / TESTED** | Blocked on Bucket | Private bucket uploads (`users/<uid>/documents/...`), V4 signed download URLs (10-min expiry), privacy scrub. |
-| **07** | **Vertex AI (Gemini on Vertex)** | Enterprise Cloud Run AI inference via IAM | **CONNECTED / TESTED** | Blocked on Cloud Run | Dual-mode client factory in `google_ai_service.py` (`vertexai=True`), service account ADC authentication without API keys. |
-| **08** | **Vertex AI Embeddings** | Dense semantic vectors for academic memory recall | **VERIFIED** | Live Active | Live generation of 768-dimensional dense vectors on `gemini-embedding-001`. Semantic document recall operational. |
-| **09** | **Vertex AI Vector Search** | Scalable semantic retrieval & local exact scan | **IMPLEMENTED / TESTED** | Local Exact Active | Pluggable `VectorSearchProvider` with `LocalExactVectorSearch` (in-DB exact cosine scan, $0 cost) & `VertexAIVectorSearch` (Matching Engine with metadata filter `user_id == current_user.id`). 5 unit tests pass. |
-| **10** | **Cloud Run** | Managed serverless backend hosting | **CONFIGURED / TESTED** | Ready to Deploy | Production non-root `Dockerfile`, dynamic `$PORT` binding, fast `/api/health` probe, memory/concurrency limits. |
-| **11** | **Secret Manager** | Secure runtime credential injection | **CONNECTED / TESTED** | Blocked on Project | `load_secrets_into_env()` boots at application startup, pulls comma-delimited `GCP_SECRET_NAMES`. Fallback to local `.env`. |
-| **12** | **Cloud Logging** | Structured JSON logs with trace correlation | **CONNECTED / TESTED** | Verified Locally | Structured `_CloudJsonFormatter` outputting severity, trace correlation (`logging.googleapis.com/trace`), and sanitized metadata. |
-| **13** | **Cloud Monitoring** | Operational observability, health & alerting | **CONFIGURED** | Blocked on Project | Health check `/api/health`, structured log metrics (`nb_ai_call_latency`, `nb_ai_call_errors`, `nb_event`), uptime checks. |
-| **14** | **BigQuery** | Privacy-minimized product analytics & event aggregation | **CONNECTED / TESTED** | Blocked on Project | Streaming background queue thread with allow-listed telemetry fields (`event_name`, `latency_ms`, `module`). Zero PII, no user IDs. |
+| # | Google Technology | Purpose in NeuroBridge | Status | Verification / evidence |
+|---|---|---|---|---|
+| 1 | **Google GenAI SDK (`google-genai`)** | Single SDK for every AI call; deprecated `google-generativeai` removed from runtime | TESTED | 199 backend tests pass through `genai_compat` adapter; live call reached Google and returned `API_KEY_INVALID` |
+| 2 | **Gemini function calling (Bri)** | Bri plans and runs real app tools (risk-tiered, confirmation-gated) | TESTED | Tool declarations to `types.FunctionDeclaration` conversion tested; orchestrator suite green. Live: **BLOCKED (key)** |
+| 3 | **Gemini structured output** | Task breakdown (`TaskBreakdownPlan`) and syllabus extraction use `response_schema` | IMPLEMENTED | Live: **BLOCKED (key)** |
+| 4 | **Gemini multimodal document understanding** | PDF/image syllabus to assignments, deadlines, 5-min first steps | TESTED | Upload → approve → real `TaskStep` rows test. Live: **BLOCKED (key)** |
+| 5 | **Vertex AI (Gemini on Vertex)** | Production inference with service-account auth (no API key) on Cloud Run | IMPLEMENTED | `GOOGLE_GENAI_USE_VERTEXAI=true` path in `get_genai_client`; enabled by deploy script |
+| 6 | **Gemini embeddings + semantic retrieval** | `gemini-embedding-001` vectors for uploaded courses; Bri tool `search_my_documents` + `/api/documents/search` | TESTED | Ranking + per-user isolation tests |
+| 7 | **Firebase Authentication** | Google Sign-In; backend verifies ID tokens (`firebase-admin`) → `firebase:<uid>` identity | IMPLEMENTED | Needs Firebase web config + Google provider enabled |
+| 8 | **Cloud Firestore** | Cross-device adaptive profile (`/api/google/profile`), document library mirror, privacy delete | IMPLEMENTED | Needs project/ADC |
+| 9 | **Cloud Storage** | Private, user-prefixed syllabus storage; V4 signed download URLs; privacy delete | IMPLEMENTED | Needs bucket (script creates it) |
+| 10 | **Secret Manager** | `GCP_SECRET_NAMES` loaded into env at boot, before auth/AI modules import | TESTED | Fake-client test; `/api/health` reports loaded names |
+| 11 | **Cloud Logging** | Structured JSON logs (severity, trace correlation, per-request latency, AI-call events), no user content | TESTED | JSON output verified locally with `K_SERVICE` set |
+| 12 | **Cloud Monitoring** | Log-based metrics (`nb_ai_call_latency`, `nb_ai_call_errors`, `nb_documents_analyzed`) + `/api/health` uptime check | CONFIGURED | Created by `deploy/gcp-setup.ps1` |
+| 13 | **BigQuery** | Partitioned `product_events` table, batched streaming inserts, field allow-list (no user ids/text) | TESTED | Fake-client test proves privacy filtering |
+| 14 | **Cloud Run** | Backend hosting (`Dockerfile`, non-root, `$PORT`, JSON logs) | CONFIGURED | Image not built here (no Docker/gcloud) |
+| 15 | **Cloud Build + Artifact Registry** | `cloudbuild.yaml`: test → build → push → deploy | CONFIGURED | |
+| 16 | **Firebase App Check** | reCAPTCHA Enterprise token on AI/agent/document routes; `off/monitor/enforce` | TESTED | Enforce-mode rejection test; frontend attaches `X-Firebase-AppCheck` |
+| 17 | **Google Analytics for Firebase** | Allow-listed events: login, document_analyzed, tasks_approved, semantic_search, focus_session_started, bri_message_sent | IMPLEMENTED | Needs `VITE_FIREBASE_MEASUREMENT_ID` |
+| 18 | **Firebase Hosting** | Serves `dist/`, rewrites `/api/**` → Cloud Run (same origin, no CORS) | CONFIGURED | `firebase.json`, Firestore/Storage rules |
 
----
-
-## Operational Guide
-- Run live Google status check:
-  ```powershell
-  backend\venv\Scripts\python.exe -m backend.scripts.verify_google
-  ```
-- Run automated test suite:
-  ```powershell
-  backend\venv\Scripts\python.exe -m pytest backend/tests
-  ```
-- Deploy to GCP:
-  ```powershell
-  .\deploy\gcp-setup.ps1 -ProjectId "<YOUR_GCP_PROJECT_ID>"
-  ```
+**Deliberately not integrated:** Vertex AI Vector Search (paid always-on endpoint; an exact per-user scan over a few hundred vectors is free), Document AI (Gemini multimodal already does extraction with fewer moving parts), Cloud Tasks/Pub/Sub/Scheduler (no async workload needs them yet), ADK and Firebase AI Logic (would duplicate Bri's tested orchestrator and the backend-only key policy).

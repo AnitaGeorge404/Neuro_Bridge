@@ -145,10 +145,8 @@ export default function Login({ forcedRole = null, hideRoleToggle = false }) {
         }
       } catch (e) {
         const msg = e.message || "";
-        // Supabase reports HTTP failures as AuthApiError. Only a status-zero retryable
-        // error indicates that the browser could not reach the auth service.
-        if (e?.name === "AuthRetryableFetchError" && e?.status === 0) {
-          setError("Cannot reach the authentication service right now. Check your connection and try again.");
+        if (msg.toLowerCase().includes("networkerror") || msg.toLowerCase().includes("fetch")) {
+          setError("Cannot reach the server right now. The project may be paused. Use the Demo Access buttons below to get in.");
         } else {
           setError(msg || "Sign up failed. Please try again.");
         }

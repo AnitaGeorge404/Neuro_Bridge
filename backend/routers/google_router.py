@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import auth
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
-from ..services import firebase_service, google_ai_service, google_cloud, semantic_memory, vector_search_service
+from ..services import firebase_service, google_ai_service, google_cloud, semantic_memory
 
 router = APIRouter()
 
@@ -25,11 +25,6 @@ def google_status():
         },
         "firebase_auth": auth._FIREBASE_INITIALIZED,
         "app_check": {"mode": auth.APP_CHECK_MODE, **auth.app_check_stats},
-        "vector_search": {
-            "provider": type(vector_search_service.get_vector_search_provider()).__name__,
-            "vertex_enabled": vector_search_service.VERTEX_VECTOR_SEARCH_ENABLED,
-            "endpoint_configured": bool(vector_search_service.VERTEX_VECTOR_SEARCH_ENDPOINT_ID),
-        },
         **firebase_service.status(),
         "cloud": google_cloud.status(),
     }

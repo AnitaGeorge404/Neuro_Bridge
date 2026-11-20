@@ -13,7 +13,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..models import google_models
-from . import google_ai_service, vector_search_service
+from . import google_ai_service
 
 MAX_SCAN = 500
 
@@ -29,15 +29,23 @@ def index_texts(db: Session, user_id: str, kind: str, texts: list[str], ref_id: 
     return len(texts)
 
 
-def search(db: Session, user_id: str, query: str, top_k: int = 5, min_score: float = 0.35, kind: Optional[str] = None) -> list[dict]:
+def search(db: Session, user_id: str, query: str, top_k: int = 5, min_score: float = 0.35) -> list[dict]:
+    rows = (
+        db.query(google_models.SemanticMemory)
+        .filter_by(user_id=user_id)
+        .order_by(google_models.SemanticMemory.id.desc())
+        .limit(MAX_SCAN)
+        .all()
+    )
+    if not rows:
+        return []
     qvec = google_ai_service.generate_embedding(query, task_type="RETRIEVAL_QUERY")
     if not qvec:
         return []
-    return vector_search_service.search_vectors(
-        db=db,
-        user_id=user_id,
-        query_vector=qvec,
-        top_k=top_k,
-        min_score=min_score,
-        kind=kind,
-    )
+    scored = [
+        {"text": r.text, "kind": r.kind, "ref_id": r.ref_id, "score": round(google_ai_service.cosine_similarity(qvec, r.embedding or []), 4)}
+        for r in rows
+    ]
+    scored = [s for s in scored if s["score"] >= min_score]
+    scored.sort(key=lambda s: s["score"], reverse=True)
+    return scored[:top_k]

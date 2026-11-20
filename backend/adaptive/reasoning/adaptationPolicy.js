@@ -147,44 +147,12 @@ export const ADAPTATION_RULES = [
  * numeric priorities act only as within-tier tie-breakers at Tier 8
  * (CURRENT COGNITIVE/EMOTIONAL STATE).
  */
-/**
- * Temporal stability profiles for the shipped policies (Task 2). Entering an
- * adaptation needs stronger, persistent evidence than maintaining it:
- *   - activationThreshold   = the evidence floor for a NEW adaptation
- *   - deactivationThreshold = weaker evidence that still maintains it
- *   - confirmationMs        = how long entry evidence must persist (transient
- *                             signals do not change the UI) ...
- *   - immediateActivationThreshold = ... unless it is this strong
- *   - minDurationMs         = brief contradiction cannot withdraw it sooner
- *   - cooldownMs            = the same mode cannot re-enter sooner
- *   - maxDurationMs         = maintenance without fresh entry-level evidence
- *                             is capped (never indefinitely active)
- * Urgency is never delayed (no confirmation window).
- */
-const URGENT_STABILITY = Object.freeze({
-  activationThreshold: 0.5, deactivationThreshold: 0.3, confirmationMs: 0,
-  minDurationMs: 15000, cooldownMs: 5000, maxDurationMs: 300000,
-});
-const DISTRESS_STABILITY = Object.freeze({
-  activationThreshold: 0.5, deactivationThreshold: 0.3, confirmationMs: 3000,
-  immediateActivationThreshold: 0.75, minDurationMs: 20000, cooldownMs: 15000, maxDurationMs: 600000,
-});
-const LOAD_STABILITY = Object.freeze({
-  activationThreshold: 0.5, deactivationThreshold: 0.3, confirmationMs: 5000,
-  immediateActivationThreshold: 0.85, minDurationMs: 20000, cooldownMs: 20000, maxDurationMs: 600000,
-});
-const FOCUS_STABILITY = Object.freeze({
-  activationThreshold: 0.5, deactivationThreshold: 0.3, confirmationMs: 8000,
-  immediateActivationThreshold: 0.9, minDurationMs: 30000, cooldownMs: 30000, maxDurationMs: 900000,
-});
-
 const rawPolicies = [
   {
     id: "critical_urgency",
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 110,
-    hysteresis: URGENT_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -208,7 +176,6 @@ const rawPolicies = [
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 100,
-    hysteresis: DISTRESS_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -235,7 +202,6 @@ const rawPolicies = [
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 90,
-    hysteresis: DISTRESS_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -264,7 +230,6 @@ const rawPolicies = [
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 80,
-    hysteresis: LOAD_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -289,7 +254,6 @@ const rawPolicies = [
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 70,
-    hysteresis: LOAD_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -313,7 +277,6 @@ const rawPolicies = [
     scope: PolicyScope.GENERIC,
     tier: PriorityTier.CURRENT_STATE,
     priority: 60,
-    hysteresis: FOCUS_STABILITY,
     triggerGroups: [
       {
         operator: TriggerGroupOperator.AND,
@@ -348,45 +311,6 @@ function comparePrecedence(left, right) {
 }
 
 /**
- * Evidence thresholds for state-driven triggers (Task 1: evidence-grounded
- * adaptation).
- *
- *   - `minTriggerConfidence`: a trigger group fires only when at least one of
- *     its matched triggers rests on evidence at or above this confidence. A
- *     low-confidence dimension can therefore never trigger an adaptation on
- *     its own.
- *   - `minSupportingConfidence`: below this, a dimension's evidence is treated
- *     as absent — it cannot even corroborate a stronger trigger in the same
- *     AND group.
- *
- * Thresholds apply only to dimensions that carry evidence metadata (a
- * UserState built by `buildUserState`, which exposes `_dimensions`, or a raw
- * DimensionResult object). Dimensions without metadata — e.g. the synthetic,
- * schema-validated `strategyEffectiveness:<id>` learned dimensions — are
- * treated as explicit inputs. Tier 1 SAFETY rules are exempt from the
- * confidence/staleness floor (a weak safety signal still acts), but never
- * from the missing-evidence rule.
- */
-export const EVIDENCE_THRESHOLDS = Object.freeze({
-  minTriggerConfidence: 0.5,
-  minSupportingConfidence: 0.25,
-});
-
-/** Policy dimension names that alias a UserState `_dimensions` key. */
-const DIMENSION_EVIDENCE_ALIASES = Object.freeze({
-  mood: "emotionalState",
-  attention: "attentionState",
-  energy: "energyLevel",
-  engagement: "engagementLevel",
-});
-
-/** Machine-readable reasons a value-matched rule was suppressed. */
-export const EvidenceSuppressionReason = Object.freeze({
-  STALE: "stale_evidence",
-  LOW_CONFIDENCE: "low_confidence_evidence",
-});
-
-/**
  * Read a state dimension value. UserState exposes dimension values as
  * strings via property access; raw DimensionResult objects are unwrapped.
  */
@@ -399,57 +323,6 @@ function readDimension(resolvedState, dimension) {
 }
 
 /**
- * Missing evidence is never a positive signal: an absent, null, empty or
- * "unknown" value cannot satisfy any trigger (including `not_in`).
- */
-function isMissingValue(value) {
-  return (
-    value === undefined ||
-    value === null ||
-    value === "unknown" ||
-    (typeof value === "string" && value.trim().length === 0)
-  );
-}
-
-/**
- * Evidence metadata for a dimension, or `null` when the state carries none.
- * @returns {{ confidence: number, stale: boolean } | null}
- */
-function readEvidence(resolvedState, dimension) {
-  const toEvidence = (candidate) => {
-    if (!candidate || typeof candidate !== "object" || !("confidence" in candidate)) {
-      return null;
-    }
-    const confidence =
-      typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence)
-        ? Math.min(1, Math.max(0, candidate.confidence))
-        : 0;
-    return { confidence, stale: candidate.stale === true };
-  };
-
-  const direct = toEvidence(resolvedState?.[dimension]);
-  if (direct) return direct;
-
-  const dimensions = resolvedState?._dimensions;
-  if (!dimensions || typeof dimensions !== "object") return null;
-  const key = DIMENSION_EVIDENCE_ALIASES[dimension] ?? dimension;
-  return toEvidence(dimensions[key]);
-}
-
-function resolveThresholds(options) {
-  const pick = (key) => {
-    const value = options?.evidence?.[key];
-    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
-      ? value
-      : EVIDENCE_THRESHOLDS[key];
-  };
-  return {
-    minTriggerConfidence: pick("minTriggerConfidence"),
-    minSupportingConfidence: pick("minSupportingConfidence"),
-  };
-}
-
-/**
  * Evaluate a single trigger against a resolved state.
  * @param {import("../../../support/schemas/supportSchemas").TriggerSchema} trigger
  * @param {object} resolvedState
@@ -457,9 +330,6 @@ function resolveThresholds(options) {
  */
 function evaluateTrigger(trigger, resolvedState) {
   const actual = readDimension(resolvedState, trigger.dimension);
-  if (isMissingValue(actual)) {
-    return false;
-  }
   switch (trigger.condition) {
     case TriggerCondition.GTE:
       return actual >= trigger.value;
@@ -477,77 +347,14 @@ function evaluateTrigger(trigger, resolvedState) {
 }
 
 /**
- * Evaluate one AND trigger group with evidence gating.
- *
- * @returns {{ status: "matched"|"no_match"|"suppressed", matchedTriggers: object[],
- *             reason?: string, weakestConfidence?: number }}
- */
-function evaluateGroup(group, resolvedState, thresholds, exempt) {
-  const matchedTriggers = [];
-  let strongest = null; // strongest evidence among matched triggers
-  let weakest = null;
-  let anyUngated = false;
-  let suppression = null;
-
-  for (const trigger of group.triggers) {
-    if (!evaluateTrigger(trigger, resolvedState)) {
-      return { status: "no_match", matchedTriggers: [] };
-    }
-    matchedTriggers.push(trigger);
-
-    const evidence = readEvidence(resolvedState, trigger.dimension);
-    if (evidence === null || exempt) {
-      anyUngated = true;
-      continue;
-    }
-    strongest = strongest === null ? evidence.confidence : Math.max(strongest, evidence.confidence);
-    weakest = weakest === null ? evidence.confidence : Math.min(weakest, evidence.confidence);
-    if (evidence.stale) {
-      suppression = EvidenceSuppressionReason.STALE;
-    } else if (evidence.confidence < thresholds.minSupportingConfidence && suppression === null) {
-      suppression = EvidenceSuppressionReason.LOW_CONFIDENCE;
-    }
-  }
-
-  if (suppression === null && !anyUngated && (strongest ?? 0) < thresholds.minTriggerConfidence) {
-    suppression = EvidenceSuppressionReason.LOW_CONFIDENCE;
-  }
-
-  // Strongest supporting evidence; 1 when no matched trigger carried evidence
-  // metadata (explicit / un-instrumented input, treated as certain above).
-  const evidenceConfidence = strongest ?? 1;
-  if (suppression !== null) {
-    return {
-      status: "suppressed",
-      matchedTriggers,
-      reason: suppression,
-      weakestConfidence: weakest ?? undefined,
-      evidenceConfidence,
-    };
-  }
-  return { status: "matched", matchedTriggers, evidenceConfidence };
-}
-
-/**
  * Evaluate policies against a resolved state.
- *
- * Evidence-grounded (Task 1): a rule fires only when a trigger group is
- * satisfied by known, fresh evidence of adequate confidence (see
- * EVIDENCE_THRESHOLDS). Rules whose trigger values matched but whose
- * evidence was stale or too weak are reported in `suppressed` (never in
- * `triggered`) so the decision trace can explain the neutral outcome.
  *
  * @param {Array<import("../../../support/schemas/supportSchemas").PolicyRuleSchema>} rules
  * @param {object} resolvedState - UserState (dimensions readable by name)
- * @param {object} [options]
- * @param {{ minTriggerConfidence?: number, minSupportingConfidence?: number }} [options.evidence]
- *   Threshold overrides (0..1); defaults to EVIDENCE_THRESHOLDS.
- * @returns {{ triggered: Array<object>, suppressed: Array<object> }}
+ * @returns {{ triggered: Array<object> }}
  */
-export function evaluatePolicies(rules, resolvedState, options = {}) {
-  const thresholds = resolveThresholds(options);
+export function evaluatePolicies(rules, resolvedState) {
   const triggered = [];
-  const suppressed = [];
 
   for (const rule of rules) {
     if (!rule || rule.active === false) {
@@ -557,55 +364,30 @@ export function evaluatePolicies(rules, resolvedState, options = {}) {
       continue;
     }
 
-    const exempt = rule.tier === PriorityTier.SAFETY;
     const matchedGroups = [];
-    const suppressedGroups = [];
-    const matchedEvidence = [];
     rule.triggerGroups.forEach((group, groupIndex) => {
       if (!group || !Array.isArray(group.triggers) || group.triggers.length === 0) {
         return;
       }
-      const result = evaluateGroup(group, resolvedState, thresholds, exempt);
-      if (result.status === "matched") {
-        matchedGroups.push({ groupIndex, matchedTriggers: result.matchedTriggers });
-        matchedEvidence.push(result.evidenceConfidence);
-      } else if (result.status === "suppressed") {
-        suppressedGroups.push({ groupIndex, ...result });
+      const matchedTriggers = group.triggers.filter((trigger) => evaluateTrigger(trigger, resolvedState));
+      if (matchedTriggers.length === group.triggers.length) {
+        matchedGroups.push({ groupIndex, matchedTriggers });
       }
     });
 
-    const base = {
+    if (matchedGroups.length === 0) {
+      continue;
+    }
+
+    triggered.push({
       ruleId: rule.id,
       version: rule.version ?? 1,
       tier: rule.tier,
       priority: rule.priority ?? 0,
       scope: rule.scope,
       action: rule.action,
-    };
-
-    if (matchedGroups.length === 0) {
-      if (suppressedGroups.length > 0) {
-        const first = suppressedGroups[0];
-        const record = {
-          ...base,
-          matchedTriggers: suppressedGroups.flatMap((group) => group.matchedTriggers),
-          evidenceReason: first.reason,
-          evidenceConfidence: Math.max(...suppressedGroups.map((group) => group.evidenceConfidence ?? 0)),
-        };
-        if (typeof first.weakestConfidence === "number") {
-          record.confidence = first.weakestConfidence;
-        }
-        suppressed.push(record);
-      }
-      continue;
-    }
-
-    triggered.push({
-      ...base,
       matchedGroups,
       matchedTriggers: matchedGroups.flatMap((group) => group.matchedTriggers),
-      // Strongest evidence behind the firing group(s): the hysteresis signal.
-      evidenceConfidence: Math.max(...matchedEvidence),
       // Carry policy-declared metadata through to downstream stages:
       // hysteresis enforcement (D6) and planner timing/expiry derive from it.
       confidence: rule.confidence,
@@ -616,9 +398,8 @@ export function evaluatePolicies(rules, resolvedState, options = {}) {
   }
 
   triggered.sort(comparePrecedence);
-  suppressed.sort(comparePrecedence);
 
-  return { triggered, suppressed };
+  return { triggered };
 }
 
 /**

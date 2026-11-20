@@ -1,11 +1,10 @@
-import sys
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 from dotenv import load_dotenv
 
-load_dotenv(override="pytest" not in sys.modules)  # local .env beats stale OS vars; tests keep their blanks
+load_dotenv()
 
 # We expect a Supabase Postgres connection string here, or default to sqlite for local dev if not found
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")

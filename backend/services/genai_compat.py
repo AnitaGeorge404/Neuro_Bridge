@@ -71,22 +71,12 @@ class _Response:
 class _Chat:
     def __init__(self, model: "GenerativeModel", history: list):
         self._model = model
-        self._active_model = model.model_name
-        self._chat = model._client.chats.create(model=self._active_model, config=model._config(), history=history)
+        self._chat = model._client.chats.create(model=model.model_name, config=model._config(), history=history)
 
     def send_message(self, message: Any, request_options: Optional[dict] = None):
         config = self._model._config(request_options)
-        parts = _to_parts(message)
-
-        def _send(model_name: str):
-            if model_name != self._active_model:
-                # Switch model mid-conversation without losing context: carry the curated history over.
-                history = self._chat.get_history(curated=True)
-                self._chat = self._model._client.chats.create(model=model_name, config=self._model._config(), history=history)
-                self._active_model = model_name
-            return self._chat.send_message(parts, config=config)
-
-        raw, _ = google_ai_service.call_with_fallback("chat_send_message", self._active_model, _send)
+        with google_ai_service.observe("chat_send_message", self._model.model_name):
+            raw = self._chat.send_message(_to_parts(message), config=config)
         return _Response(raw)
 
 
@@ -117,8 +107,8 @@ class GenerativeModel:
         return _Chat(self, contents)
 
     def generate_content(self, prompt: Any, request_options: Optional[dict] = None):
-        raw, _ = google_ai_service.call_with_fallback(
-            "generate_content", self.model_name,
-            lambda m: self._client.models.generate_content(model=m, contents=prompt, config=self._config(request_options)),
-        )
+        with google_ai_service.observe("generate_content", self.model_name):
+            raw = self._client.models.generate_content(
+                model=self.model_name, contents=prompt, config=self._config(request_options)
+            )
         return _Response(raw)
