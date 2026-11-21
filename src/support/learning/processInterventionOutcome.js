@@ -1,6 +1,7 @@
 import { deriveMemoryFromReflections, isLearningEnabled } from "@/support/memory";
 import { reflectIntervention } from "@/support/reflection";
 import { reflectFocusIntervention } from "@/support/reflection";
+import { getRole4Repository } from "@/support/persistence/role4Repository";
 
 const REFLECTABLE_STATUSES = new Set(["completed", "partially_completed", "abandoned"]);
 
@@ -45,6 +46,11 @@ export async function processFocusInterventionOutcome(intervention, options = {}
   }
   try {
     result.memory = deriveMemoryFromReflections(intervention.userId, intervention.moduleId);
+    const repository = options.repository || await getRole4Repository(intervention.userId);
+    await Promise.all([
+      ...result.memory.created,
+      ...result.memory.updated,
+    ].map((memory) => repository.upsertMemory(memory)));
   } catch (error) {
     result.errors.push({ stage: "memory", message: error instanceof Error ? error.message : "Memory derivation failed" });
   }
