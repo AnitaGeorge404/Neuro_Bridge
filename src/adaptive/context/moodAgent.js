@@ -240,10 +240,12 @@ export function inferMood(inputs = {}) {
   // Final Synthesis & Conflict Resolution
   let finalValue = "unknown";
   let finalConfidence = 0.0;
+  let basis = null;
 
   if (explicitCandidate) {
     finalValue = explicitCandidate.value;
     finalConfidence = explicitCandidate.confidence;
+    basis = "explicit_checkin";
 
     // Check for conflict with conversation or activity to adjust confidence
     if (conversationCandidate && conversationCandidate.value !== explicitCandidate.value) {
@@ -253,6 +255,7 @@ export function inferMood(inputs = {}) {
   } else if (conversationCandidate) {
     finalValue = conversationCandidate.value;
     finalConfidence = conversationCandidate.confidence;
+    basis = "conversation";
 
     // Reinforce if activity candidate agrees
     if (activityCandidate && activityCandidate.value === conversationCandidate.value) {
@@ -264,12 +267,15 @@ export function inferMood(inputs = {}) {
   } else if (interactionCandidate) {
     finalValue = interactionCandidate.value;
     finalConfidence = interactionCandidate.confidence;
+    basis = "interaction";
   } else if (activityCandidate) {
     finalValue = activityCandidate.value;
     finalConfidence = activityCandidate.confidence;
+    basis = "activity";
   } else if (previousCandidate) {
     finalValue = previousCandidate.value;
     finalConfidence = previousCandidate.confidence;
+    basis = "previous_mood";
   }
 
   // If evidence is insufficient (confidence < 0.35 or value is unknown), return unknown
@@ -283,6 +289,7 @@ export function inferMood(inputs = {}) {
     value: finalValue,
     confidence: +finalConfidence.toFixed(2),
     sources,
+    basis: finalValue === "unknown" ? null : basis,
     timestamp: now,
   };
 
@@ -311,6 +318,7 @@ function commitMood(result) {
     moodTrend: "stable",
     confidence: result.confidence,
     sources: result.sources,
+    basis: typeof result.basis === "string" ? result.basis : null,
   };
 
   contextStore.updateContext("mood", storeMoodData, "moodAgent", result.confidence);
@@ -352,7 +360,7 @@ let _burstRestoreTimer = null;
  * adaptive UI and its recommendation stay actionable after the user stops the
  * rapid movement (instead of disappearing within ~1s of the last move).
  */
-const BURST_RESTORE_COOLDOWN_MS = 20_000;
+const BURST_RESTORE_COOLDOWN_MS = 20000;
 
 function safeSetTimeout(handler, ms) {
   return typeof window !== "undefined"
@@ -380,6 +388,7 @@ function restoreFromInteractionBurst() {
     value: normalizeMoodValue(before.value),
     confidence: Math.max(0.35, before.confidence || 0.4),
     sources: ["interaction_burst_recovery"],
+    basis: "interaction_burst_recovery",
     timestamp: new Date().toISOString(),
   };
   if (restored.value !== "unknown") {

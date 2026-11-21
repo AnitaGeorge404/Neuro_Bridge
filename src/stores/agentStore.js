@@ -3,6 +3,7 @@ import { listInterventions } from '@/support/persistence/role4Store';
 import { currentStatusLabel, friendlyToolLabel } from '@/lib/agentEvents';
 import { API_BASE_URL, backendAuthHeaders as authHeaders } from '@/lib/backendAuth';
 import { trackEvent } from '@/lib/firebase';
+import { noteChatMessageForClarification } from '@/adaptive/context/interactionEvidence.js';
 
 /**
  * Small, explicit snapshot of frontend-only (localStorage-backed) activity —
@@ -210,6 +211,9 @@ const useAgentStore = create((set, get) => ({
     abortActiveStream(); // only one active stream per conversation
 
     addMessage({ role: 'user', content: text });
+    // Repeated requests for clarification are cognitive-effort evidence for
+    // the shared context-to-state inference: count only, text never stored.
+    try { noteChatMessageForClarification(text); } catch { /* evidence must never affect chat */ }
     const streamingId = newStreamingMessageId();
     addMessage({ id: streamingId, role: 'model', content: '', streaming: true, statusLabel: 'Understanding your request...', steps: [], action_payload: null });
 
