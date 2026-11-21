@@ -5,6 +5,7 @@ import { pushWardNote } from "@/support/stores/careSyncStore";
 import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
 import { clearAllLocalAppData } from "@/lib/clearLocalAppData";
 import { buildProfileFromFirebase, firebaseEnabled, firebaseSignOut, signInWithGoogle } from "@/lib/firebase";
+import { hydrateRole4UserData } from "@/support/persistence/role4Repository";
 
 function buildProfileFromSupabase(supabaseUser) {
   const meta = supabaseUser?.user_metadata ?? {};
@@ -264,6 +265,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [persistenceError, setPersistenceError] = useState(null);
 
   const disorders = useMemo(() => {
     if (!user) return [];
@@ -301,6 +303,11 @@ export function AuthProvider({ children }) {
       setUser(fullUser);
       setIsAuthenticated(true);
       setIsLoading(false);
+      hydrateRole4UserData(profile.id).then(() => {
+        if (mounted) setPersistenceError(null);
+      }).catch(() => {
+        if (mounted) setPersistenceError("Your support history could not be refreshed. Please try again.");
+      });
     };
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -313,11 +320,17 @@ export function AuthProvider({ children }) {
         const stored = localStorage.getItem("nb_auth");
         if (stored) {
           const parsed = JSON.parse(stored);
-          setUser(parsed);
-          setIsAuthenticated(true);
+          if (!parsed._supabase) {
+            setUser(parsed);
+            setIsAuthenticated(true);
+          } else {
+            setUser(null);
+            setIsAuthenticated(false);
+          }
         } else {
-          setUser(null);
-          setIsAuthenticated(false);
+      setUser(null);
+      setIsAuthenticated(false);
+      setPersistenceError(null);
         }
       } catch {
         localStorage.removeItem("nb_auth");
@@ -340,8 +353,13 @@ export function AuthProvider({ children }) {
           const stored = localStorage.getItem("nb_auth");
           if (stored) {
             const parsed = JSON.parse(stored);
-            setUser(parsed);
-            setIsAuthenticated(true);
+            if (!parsed._supabase) {
+              setUser(parsed);
+              setIsAuthenticated(true);
+            } else {
+              setUser(null);
+              setIsAuthenticated(false);
+            }
           }
         } catch {
           localStorage.removeItem("nb_auth");
@@ -355,8 +373,13 @@ export function AuthProvider({ children }) {
           const stored = localStorage.getItem("nb_auth");
           if (stored) {
             const parsed = JSON.parse(stored);
-            setUser(parsed);
-            setIsAuthenticated(true);
+            if (!parsed._supabase) {
+              setUser(parsed);
+              setIsAuthenticated(true);
+            } else {
+              setUser(null);
+              setIsAuthenticated(false);
+            }
           }
         } catch {
           localStorage.removeItem("nb_auth");
@@ -579,6 +602,7 @@ export function AuthProvider({ children }) {
     role: user?.role ?? null,
     isAuthenticated,
     isLoading,
+    persistenceError,
     disorders,
     tagProfile,
     enabledModules,

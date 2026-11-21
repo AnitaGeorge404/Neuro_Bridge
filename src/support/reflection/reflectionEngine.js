@@ -109,14 +109,14 @@ function buildReflection(intervention, history) {
     keyInsights: [],
     followUpSuggestions: [],
   };
-  return saveReflection(persistedIntervention.userId, reflection);
+  return reflection;
 }
 
 export function reflectIntervention(intervention) {
   const history = getInterventionHistory(intervention.userId).find(
     (entry) => entry.intervention.id === intervention.id,
   );
-  return buildReflection(intervention, history);
+  return saveReflection(intervention.userId, buildReflection(intervention, history));
 }
 
 /** Uses the Focus repository's normalized records while keeping reflection storage domain-local. */
@@ -130,9 +130,12 @@ export async function reflectFocusIntervention(intervention, { repository: suppl
     repository.listLifecycleEvents(intervention.userId, intervention.id),
     repository.listOutcomes(intervention.userId, intervention.id),
   ]);
-  return buildReflection(intervention, persistedIntervention ? {
+  const reflection = buildReflection(intervention, persistedIntervention ? {
     intervention: persistedIntervention,
     lifecycleEvents,
     outcomes,
   } : null);
+  const saved = await repository.upsertReflection(reflection);
+  // Keep the current device cache in sync only after the remote write succeeds.
+  return saveReflection(intervention.userId, saved);
 }

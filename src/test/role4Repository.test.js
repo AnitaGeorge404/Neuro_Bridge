@@ -4,6 +4,7 @@ import {
   createSupabaseFallbackRole4Repository,
   createSupabaseRole4Repository,
   getRole4Repository,
+  hydrateRole4UserData,
   interventionFromRow,
   interventionToRow,
   lifecycleEventFromRow,
@@ -11,6 +12,7 @@ import {
   outcomeFromRow,
   outcomeToRow,
 } from "@/support/persistence/role4Repository";
+import { clearUserRole4Data, listInterventions, listReflections, listUserMemories } from "@/support/persistence/role4Store";
 import { completeFocusSessionIntervention, startFocusSessionIntervention } from "@/support/lifecycle/focusSessionLifecycle";
 import { getSupportEvidenceAsync } from "@/support/evidence/supportEvidence";
 
@@ -72,10 +74,39 @@ describe("Role 4 repository", () => {
     const remote = { createIntervention: vi.fn().mockRejectedValue(new Error("offline")) };
     const local = { createIntervention: vi.fn().mockResolvedValue(intervention) };
     const repository = createSupabaseFallbackRole4Repository(remote, local);
-    await expect(repository.createIntervention(intervention)).resolves.toEqual(intervention);
-    await repository.createIntervention(intervention);
+    await expect(repository.createIntervention(intervention)).rejects.toThrow("offline");
     expect(remote.createIntervention).toHaveBeenCalledTimes(1);
-    expect(local.createIntervention).toHaveBeenCalledTimes(2);
+    expect(local.createIntervention).not.toHaveBeenCalled();
+  });
+
+  it("hydrates only the authenticated user's remote history into the local read cache", async () => {
+    clearUserRole4Data(userId);
+    const reflection = { id: "r-1", userId, interventionId: intervention.id, moduleId: intervention.moduleId, reflectionId: "r-1", timestamp: intervention.createdAt, version: 1, reflectionVersion: 1, summary: "completed", insights: [], keyInsights: [], followUpSuggestions: [], confidence: "low", metadata: {}, evidenceOutcomeIds: [], privacy: "private", source: "system_inference", createdAt: intervention.createdAt, updatedAt: intervention.updatedAt };
+    const memory = { id: "m-1", userId, memoryId: "m-1", moduleId: intervention.moduleId, category: "successful_strategy", type: "successful_strategy", key: "focus", value: { observedAssociation: "completed" }, supportingReflectionIds: [], confidence: "moderate", version: 1, status: "active", contradictionCount: 0, metadata: {}, privacy: "private", source: "system_inference", evidenceIds: [], createdAt: intervention.createdAt, updatedAt: intervention.updatedAt };
+    const rows = {
+      support_interventions: [interventionToRow(intervention)],
+      support_lifecycle_events: [lifecycleEventToRow(event)],
+      support_outcomes: [outcomeToRow(outcome)],
+      support_reflections: [{ ...reflection, schema_version: 1, user_id: userId, intervention_id: intervention.id, module_id: intervention.moduleId, reflection_id: reflection.reflectionId, outcome_summary: null, key_insights: [], follow_up_suggestions: [], evidence_outcome_ids: [], created_at: reflection.createdAt, updated_at: reflection.updatedAt }],
+      support_memories: [{ ...memory, schema_version: 1, user_id: userId, memory_id: memory.memoryId, module_id: memory.moduleId, evidence_count: null, supporting_reflection_ids: [], confidence_level: null, first_observed_at: null, last_updated_at: null, contradiction_count: 0, evidence_ids: [], expires_at: null, archived_at: null, deleted_at: null, created_at: memory.createdAt, updated_at: memory.updatedAt }],
+    };
+    const client = {
+      auth: { getSession: async () => ({ data: { session: { user: { id: userId } } }, error: null }) },
+      from: (table) => {
+        const query = {
+          select: () => query,
+          eq: () => query,
+          order: async () => ({ data: rows[table], error: null }),
+        };
+        return query;
+      },
+    };
+
+    await expect(hydrateRole4UserData(userId, { client })).resolves.toBe(true);
+    expect(listInterventions(userId)).toHaveLength(1);
+    expect(listReflections(userId)).toHaveLength(1);
+    expect(listUserMemories(userId)).toHaveLength(1);
+    expect(listInterventions("another-user")).toEqual([]);
   });
 
   it("persists Focus start, completion, and reconstructed history through an injected remote boundary", async () => {

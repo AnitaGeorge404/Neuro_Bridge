@@ -119,8 +119,8 @@ export function createSupabaseRole4Repository(client = supabase) {
     async appendLifecycleEvent(record) { const { data, error } = await client.from(TABLES.lifecycleEvents).insert(lifecycleEventToRow(record)).select().single(); throwIfError(error); return lifecycleEventFromRow(data); },
     async appendOutcome(record) { const { data, error } = await client.from(TABLES.outcomes).insert(outcomeToRow(record)).select().single(); throwIfError(error); return outcomeFromRow(data); },
     async updateOutcome(record) { const { data, error } = await client.from(TABLES.outcomes).update(outcomeToRow(record)).eq("user_id", record.userId).eq("id", record.id).select().single(); throwIfError(error); return outcomeFromRow(data); },
-    async upsertReflection(record) { const { data, error } = await client.from(TABLES.reflections).upsert(reflectionToRow(record), { onConflict: "id,user_id" }).select().single(); throwIfError(error); return reflectionFromRow(data); },
-    async upsertMemory(record) { const { data, error } = await client.from(TABLES.memories).upsert(memoryToRow(record), { onConflict: "id,user_id" }).select().single(); throwIfError(error); return memoryFromRow(data); },
+    async upsertReflection(record) { const { data, error } = await client.from(TABLES.reflections).upsert(reflectionToRow(record), { onConflict: "id" }).select().single(); throwIfError(error); return reflectionFromRow(data); },
+    async upsertMemory(record) { const { data, error } = await client.from(TABLES.memories).upsert(memoryToRow(record), { onConflict: "id" }).select().single(); throwIfError(error); return memoryFromRow(data); },
     async listInterventions(userId) { const { data, error } = await client.from(TABLES.interventions).select("*").eq("user_id", userId).order("created_at", { ascending: false }); throwIfError(error); return data.map(interventionFromRow); },
     async listInterventionsByModule(userId, moduleId) { const { data, error } = await client.from(TABLES.interventions).select("*").eq("user_id", userId).eq("module_id", moduleId).order("created_at", { ascending: false }); throwIfError(error); return data.map(interventionFromRow); },
     async listLifecycleEvents(userId, interventionId) { let query = client.from(TABLES.lifecycleEvents).select("*").eq("user_id", userId).order("created_at", { ascending: false }); if (interventionId) query = query.eq("intervention_id", interventionId); const { data, error } = await query; throwIfError(error); return data.map(lifecycleEventFromRow); },
@@ -131,7 +131,6 @@ export function createSupabaseRole4Repository(client = supabase) {
 }
 
 export function createSupabaseFallbackRole4Repository(remote, local = createLocalRole4Repository(), onFallback = () => {}) {
-  let useLocal = false;
   const mutations = new Set([
     "createIntervention",
     "updateIntervention",
@@ -143,17 +142,15 @@ export function createSupabaseFallbackRole4Repository(remote, local = createLoca
     "upsertMemory",
   ]);
   const call = (method) => async (...args) => {
-    if (useLocal) return local[method](...args);
     try {
       const result = await remote[method](...args);
       // Mirror successful writes so a later fallback retains this session's history.
       if (mutations.has(method)) await local[method](...args);
       return result;
-    } catch {
-      // Keep a single session coherent once its remote connection has failed.
-      useLocal = true;
-      onFallback();
-      return local[method](...args);
+    } catch (error) {
+      // Authenticated writes must never claim remote success after a failure.
+      onFallback(error);
+      throw error;
     }
   };
 
@@ -180,12 +177,34 @@ export function createSupabaseFallbackRole4Repository(remote, local = createLoca
 export async function getRole4Repository(userId, { client = supabase } = {}) {
   const { data, error } = await client.auth.getSession();
   if (error || !data?.session?.user?.id || data.session.user.id !== userId) return createLocalRole4Repository();
-  if (degradedSupabaseUsers.has(userId)) return createLocalRole4Repository();
+  if (degradedSupabaseUsers.has(userId)) return createSupabaseRole4Repository(client);
   return createSupabaseFallbackRole4Repository(
     createSupabaseRole4Repository(client),
     createLocalRole4Repository(),
     () => degradedSupabaseUsers.add(userId),
   );
+}
+
+/**
+ * Refreshes the local, user-scoped read cache after Supabase Auth is ready.
+ * Cached data is never used as a substitute for an authenticated write.
+ */
+export async function hydrateRole4UserData(userId, { client = supabase } = {}) {
+  const repository = await getRole4Repository(userId, { client });
+  if (repository.kind !== "supabase") return false;
+  const [interventions, lifecycleEvents, outcomes, reflections, memories] = await Promise.all([
+    repository.listInterventions(userId),
+    repository.listLifecycleEvents(userId),
+    repository.listOutcomes(userId),
+    repository.listReflections(userId),
+    repository.listMemories(userId),
+  ]);
+  interventions.forEach((record) => saveIntervention(userId, record));
+  lifecycleEvents.forEach((record) => saveInterventionLifecycleEvent(userId, record));
+  outcomes.forEach((record) => saveInterventionOutcome(userId, record));
+  reflections.forEach((record) => saveReflection(userId, record));
+  memories.forEach((record) => saveUserMemory(userId, record));
+  return true;
 }
 
 export async function mirrorRole4Records(userId, records = {}, { client = supabase } = {}) {
