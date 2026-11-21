@@ -1,9 +1,10 @@
-import { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { resolveEnabledFeatures } from "@/lib/featureRegistry";
 import { DISORDERS } from "@/lib/disorders";
 import { pushWardNote } from "@/support/stores/careSyncStore";
 import { isSupabaseConfigured, supabase } from "@/lib/supabaseClient";
 import { clearAllLocalAppData } from "@/lib/clearLocalAppData";
+import { resetAdaptiveSession } from "@/adaptive/session/adaptiveSession";
 import { buildProfileFromFirebase, firebaseEnabled, firebaseSignOut, signInWithGoogle } from "@/lib/firebase";
 import { hydrateRole4UserData } from "@/support/persistence/role4Repository";
 
@@ -263,6 +264,9 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  // Latest signed-in id for sign-out cleanup (logout keeps a stable identity).
+  const userIdRef = useRef(null);
+  userIdRef.current = user?.id ?? null;
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [persistenceError, setPersistenceError] = useState(null);
@@ -548,6 +552,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Task 6: also clear adaptive memory/sessionStorage state (consents,
+    // hysteresis, profile cache) so nothing carries into the next session.
+    resetAdaptiveSession(userIdRef.current);
     clearAllLocalAppData();
     supabase.auth.signOut().catch(() => {});
     firebaseSignOut();
