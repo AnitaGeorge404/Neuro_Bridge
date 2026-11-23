@@ -140,9 +140,39 @@ describe('FocusSessions lifecycle UI', () => {
     renderFocus();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /25 min Classic/i })); await Promise.resolve(); await Promise.resolve(); });
     expect(screen.getByText('15 min may work better')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Keep 25 min' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my choice' }));
     expect(screen.getByText('25:00')).toBeTruthy();
     expect(screen.queryByText('15 min may work better')).toBeNull();
+  });
+
+  it('renders authenticated persisted history without inventing a missing duration', async () => {
+    await recordTerminalSession(25, 'completed');
+    renderFocus();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(screen.getByRole('heading', { name: 'Recent sessions' })).toBeTruthy();
+    expect(screen.getByText('completed')).toBeTruthy();
+    expect(screen.getByText('Duration unavailable')).toBeTruthy();
+  });
+
+  it('restores the same user\'s persisted recommendation history after logout and login', async () => {
+    await recordTerminalSession(15, 'completed');
+    await recordTerminalSession(15, 'completed');
+    await recordTerminalSession(15, 'completed');
+    const first = renderFocus();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText('15 min may work better')).toBeTruthy();
+    first.unmount();
+
+    auth.user = null;
+    renderFocus();
+    expect(screen.queryByRole('heading', { name: 'Recent sessions' })).toBeNull();
+    cleanup();
+
+    auth.user = { id: 'focus-ui-user' };
+    renderFocus();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByText('15 min may work better')).toBeTruthy();
   });
 
   it('uses legacy duration_minutes navigation state when canonical configuration is absent', () => {

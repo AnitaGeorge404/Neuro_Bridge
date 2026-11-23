@@ -13,6 +13,7 @@ import {
   LifecycleCommandRequestSchema,
 } from "./executionTypes";
 import { processFocusInterventionOutcome, processInterventionOutcome } from "@/support/learning/processInterventionOutcome";
+import { ToolEventType, trackToolEvent } from "@/support/persistence/toolInteractionPersistence";
 
 const RATING_STATUSES = new Set([
   InterventionStatus.COMPLETED,
@@ -74,13 +75,18 @@ async function runTransition(request, action, toStatus, reason, metadata = {}) {
         userId: parsed.command.userId, interventionId: parsed.command.interventionId, toStatus, reason,
         metadata: commandMetadata(parsed.command, metadata),
       })
-      : transitionIntervention({
-      userId: parsed.command.userId,
-      interventionId: parsed.command.interventionId,
-      toStatus,
-      reason,
-      metadata: commandMetadata(parsed.command, metadata),
-    });
+      : await trackToolEvent(parsed.command.userId, {
+        toolId: parsed.command.moduleId,
+        interactionId: parsed.command.interventionId,
+        eventType: ({
+          [InterventionStatus.IN_PROGRESS]: action === LifecycleAction.RESUME ? ToolEventType.RESUMED : ToolEventType.PROGRESSED,
+          [InterventionStatus.PAUSED]: ToolEventType.PAUSED,
+          [InterventionStatus.CANCELLED]: ToolEventType.CANCELLED,
+          [InterventionStatus.FAILED]: ToolEventType.FAILED,
+        })[toStatus] || ToolEventType.PROGRESSED,
+        idempotencyKey: parsed.command.metadata?.idempotencyKey,
+        metadata: commandMetadata(parsed.command, metadata),
+      });
     return result(parsed.command, {
       ok: true,
       status: executionStatusFor(toStatus),
@@ -150,43 +156,41 @@ export async function completeSupportModule(request) {
       return result(parsed.command, { error: error instanceof Error ? error.message : "Focus Session persistence failed", reasonCodes: ["persistence_failed"] });
     }
   }
-  const transition = await runTransition(parsed.command, LifecycleAction.COMPLETE, toStatus, "intervention_completed", {
-    completionStatus: outcome.completionStatus,
-  });
-  if (!transition.ok) return transition;
-
-  const savedOutcome = recordInterventionOutcome({
-    userId: parsed.command.userId,
-    interventionId: parsed.command.interventionId,
-    status: toStatus,
-    completed: toStatus === InterventionStatus.COMPLETED,
-    durationMs: outcome.durationMs,
-    rating: outcome.userRating,
-    userFeedback: parsed.command.metadata.storeFeedback === true ? outcome.userFeedback : undefined,
-    metrics: {
-      ...outcome.metrics,
-      finalConfiguration: outcome.finalConfiguration,
-    },
-  });
-
   try {
-    const { recordWellbeingInteraction, WELLBEING_INTERACTION_TYPES } = await import("@/services/wellbeingService.js");
-    recordWellbeingInteraction({
-      userId: parsed.command.userId,
-      interactionType: WELLBEING_INTERACTION_TYPES.SUPPORT_MODULE_COMPLETED,
-      source: parsed.command.moduleId || "support_toolkit",
-      metadata: { interventionId: parsed.command.interventionId, outcome: savedOutcome },
+    const persisted = await trackToolEvent(parsed.command.userId, {
+      toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId,
+      eventType: ToolEventType.COMPLETED,
+      idempotencyKey: parsed.command.metadata?.idempotencyKey,
+      outcome: { completed: toStatus === InterventionStatus.COMPLETED, durationMs: outcome.durationMs, rating: outcome.userRating,
+        metrics: { ...outcome.metrics, finalConfiguration: outcome.finalConfiguration } },
     });
-  } catch (e) {
-    // Safe fallback
+    return result(parsed.command, {
+      ok: true, status: ExecutionStatus.COMPLETED, intervention: persisted.intervention,
+      lifecycleEvent: persisted.lifecycleEvent, outcome: persisted.outcome,
+      reasonCodes: ["intervention_completed"], learning: processInterventionOutcome(persisted.intervention),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Tool interaction persistence failed";
+    return result(parsed.command, { error: message, reasonCodes: [message.startsWith("Invalid intervention transition") ? "invalid_transition" : "persistence_failed"] });
   }
-
-  return { ...transition, status: ExecutionStatus.COMPLETED, outcome: savedOutcome, learning: processInterventionOutcome(transition.intervention) };
 }
 
 export async function abandonSupportModule(request) {
   const parsed = await parseCommand(request, LifecycleAction.ABANDON);
   if (parsed.error) return parsed.error;
+  if (parsed.command.moduleId !== "support.focus_session") {
+    try {
+      const persisted = await trackToolEvent(parsed.command.userId, {
+        toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId, eventType: ToolEventType.ABANDONED,
+        idempotencyKey: parsed.command.metadata?.idempotencyKey,
+        outcome: parsed.command.outcome ? { completed: false, durationMs: parsed.command.outcome.durationMs, metrics: { ...parsed.command.outcome.metrics, finalConfiguration: parsed.command.outcome.finalConfiguration } } : undefined,
+      });
+      return result(parsed.command, { ok: true, status: ExecutionStatus.ABANDONED, intervention: persisted.intervention, lifecycleEvent: persisted.lifecycleEvent, outcome: persisted.outcome, reasonCodes: ["intervention_abandoned"], learning: processInterventionOutcome(persisted.intervention) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tool interaction persistence failed";
+      return result(parsed.command, { error: message, reasonCodes: [message.startsWith("Invalid intervention transition") ? "invalid_transition" : "persistence_failed"] });
+    }
+  }
   const transition = await runTransition(parsed.command, LifecycleAction.ABANDON, InterventionStatus.ABANDONED, "intervention_abandoned");
   if (!transition.ok || !parsed.command.outcome) return transition;
   const outcome = parsed.command.outcome;
@@ -198,18 +202,7 @@ export async function abandonSupportModule(request) {
       return result(parsed.command, { error: error instanceof Error ? error.message : "Focus Session persistence failed", reasonCodes: ["persistence_failed"] });
     }
   }
-  const abandonment = {
-    ...transition,
-    outcome: recordInterventionOutcome({
-      userId: parsed.command.userId,
-      interventionId: parsed.command.interventionId,
-      status: InterventionStatus.ABANDONED,
-      completed: false,
-      durationMs: outcome.durationMs,
-      metrics: { ...outcome.metrics, finalConfiguration: outcome.finalConfiguration },
-    }),
-  };
-  return { ...abandonment, learning: processInterventionOutcome(abandonment.intervention) };
+  return transition;
 }
 
 export async function cancelSupportModule(request) {
@@ -228,10 +221,6 @@ export async function rateSupportModule(request) {
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
     return result(parsed.command, { error: "Rating must be an integer from 1 through 5", reasonCodes: ["invalid_rating"] });
   }
-  if (!RATING_STATUSES.has(parsed.intervention.status)) {
-    return result(parsed.command, { error: "Rating is not available for this intervention state", reasonCodes: ["rating_not_allowed"] });
-  }
-
   if (parsed.command.moduleId === "support.focus_session") {
     try {
       const rated = await rateFocusSessionIntervention({
@@ -260,19 +249,25 @@ export async function rateSupportModule(request) {
   if (history?.outcomes.some((outcome) => typeof outcome.rating === "number")) {
     return result(parsed.command, { error: "A rating has already been submitted", reasonCodes: ["rating_already_submitted"] });
   }
+  if (!RATING_STATUSES.has(parsed.intervention.status)) {
+    return result(parsed.command, { error: "Rating is not available for this intervention state", reasonCodes: ["rating_not_allowed"] });
+  }
 
-  const savedOutcome = recordInterventionOutcome({
-    userId: parsed.command.userId,
-    interventionId: parsed.command.interventionId,
-    status: parsed.intervention.status,
-    rating,
-    userFeedback: parsed.command.metadata.storeFeedback === true ? parsed.command.outcome.userFeedback : undefined,
-    metrics: { ratingSource: "user" },
-  });
+  let persisted;
+  try {
+    persisted = await trackToolEvent(parsed.command.userId, {
+      toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId, eventType: ToolEventType.FEEDBACK,
+      idempotencyKey: parsed.command.metadata?.idempotencyKey,
+      outcome: { rating, metrics: { ratingSource: "user" } },
+    });
+  } catch (error) {
+    return result(parsed.command, { error: error instanceof Error ? error.message : "Feedback persistence failed", reasonCodes: ["persistence_failed"] });
+  }
+  const savedOutcome = persisted.outcome;
   return result(parsed.command, {
     ok: true,
     status: ExecutionStatus.COMPLETED,
-    intervention: parsed.intervention,
+    intervention: persisted.intervention,
     outcome: savedOutcome,
     reasonCodes: ["rating_recorded"],
     learning: processInterventionOutcome(parsed.intervention),

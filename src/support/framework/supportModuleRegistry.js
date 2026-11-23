@@ -941,7 +941,7 @@ const rawSupportModules = [
     developmentDomain: "adhd",
     supportedNeeds: ["task_initiation", "task_simplification", "attention_support"],
     potentiallyRelevantDomains: ["adhd", "asd", "anxiety", "dyspraxia", "general"],
-    actions: ["generate", "edit", "reorder", "start", "complete", "abandon"],
+    actions: ["generate", "edit", "reorder", "start", "pause", "resume", "complete", "abandon"],
     configurableParameters: { style: true, priority: true, timerMinutes: true },
     launchPolicy: "user_initiated",
     lifecycleEvents: ["shown", "started", "progressed", "completed", "abandoned", "rated"],

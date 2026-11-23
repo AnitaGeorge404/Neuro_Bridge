@@ -8,7 +8,7 @@ import { trackEvent } from '@/lib/firebase';
 import SupportToolThemeProvider from "@/theme/SupportToolThemeProvider";
 import SupportToolLayout from "@/components/support/SupportToolLayout";
 import { useInterventionLifecycle } from '@/support/execution';
-import { buildFocusSessionOutcome, completionRatio, validateFocusSessionConfiguration } from '@/support/modules/focusSession/focusSessionService';
+import { buildFocusSessionOutcome, completionRatio, getFocusSessionHistory, validateFocusSessionConfiguration } from '@/support/modules/focusSession/focusSessionService';
 import { FOCUS_SESSION_MODULE_ID } from '@/support/modules/focusSession/focusSessionTypes';
 import { getSupportEvidenceAsync } from '@/support/evidence';
 import { recommendFocusConfiguration } from '@backend/adaptive/reasoning/focusConfiguration';
@@ -314,6 +314,62 @@ const BreakMode = ({ secondsLeft, tip, onEnd }) => {
   );
 };
 
+const formatSessionDate = (timestamp) => {
+  if (!timestamp) return 'Date unavailable';
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatSessionDuration = (durationMs) => {
+  const minutes = Math.round(durationMs / 60000);
+  return minutes === 1 ? '1 min' : `${minutes} min`;
+};
+
+const FocusSessionHistory = ({ userId, refreshKey }) => {
+  const [state, setState] = useState({ loading: Boolean(userId), error: null, sessions: [] });
+
+  useEffect(() => {
+    let active = true;
+    if (!userId) {
+      setState({ loading: false, error: null, sessions: [] });
+      return () => { active = false; };
+    }
+    setState((current) => ({ ...current, loading: true, error: null }));
+    getFocusSessionHistory(userId)
+      .then((sessions) => {
+        if (active) setState({ loading: false, error: null, sessions: sessions.slice(0, 5) });
+      })
+      .catch(() => {
+        if (active) setState({ loading: false, error: 'Focus Session history could not be loaded.', sessions: [] });
+      });
+    return () => { active = false; };
+  }, [userId, refreshKey]);
+
+  if (!userId) return null;
+  return (
+    <section className="rounded-2xl border border-[#dce8d5] bg-white p-4 shadow-sm" aria-labelledby="focus-history-heading">
+      <div className="flex items-center gap-2">
+        <CalendarDays size={16} className="text-[#438f48]" />
+        <h2 id="focus-history-heading" className="text-[11px] font-black uppercase tracking-[0.16em] text-[#438f48]">Recent sessions</h2>
+      </div>
+      {state.loading && <p className="mt-3 text-xs text-slate-500">Loading sessions...</p>}
+      {state.error && <p role="alert" className="mt-3 text-xs text-rose-700">{state.error}</p>}
+      {!state.loading && !state.error && state.sessions.length === 0 && <p className="mt-3 text-xs text-slate-500">No saved Focus Sessions yet.</p>}
+      {!state.loading && !state.error && state.sessions.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {state.sessions.map((session) => (
+            <li key={session.id} className="flex items-center justify-between gap-3 rounded-xl bg-[#f7fbf5] px-3 py-2 text-xs">
+              <span className="min-w-0 text-slate-700">{formatSessionDate(session.timestamp)}</span>
+              <span className="shrink-0 text-slate-500">{session.durationAvailable ? formatSessionDuration(session.actualDurationMs) : 'Duration unavailable'}</span>
+              <span className="shrink-0 rounded-full border border-[#dce8d5] bg-white px-2 py-0.5 font-semibold capitalize text-[#29451E]">{String(session.status || 'unknown').replaceAll('_', ' ')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
 const FocusSessions = () => {
   const location = useLocation();
   const aiData = location.state || null;
@@ -399,6 +455,22 @@ const FocusSessions = () => {
     const data = loadStreakData();
     setStreakState(data);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setDurationRecommendation(null);
+      return () => { active = false; };
+    }
+    getSupportEvidenceAsync(user.id, [FOCUS_SESSION_MODULE_ID])
+      .then((evidence) => {
+        if (active) setDurationRecommendation(recommendFocusConfiguration(evidence));
+      })
+      .catch(() => {
+        if (active) setDurationRecommendation(null);
+      });
+    return () => { active = false; };
+  }, [user?.id]);
 
   // focus timer
   useEffect(() => {
@@ -591,9 +663,12 @@ const FocusSessions = () => {
     resetToSetup();
   };
 
+  const visibleDurationRecommendation = adaptiveConfig?.recommendation ?? durationRecommendation;
+
   const useRecommendedDuration = () => {
-    setFocusMinutes(durationRecommendation.plannedDurationMinutes);
-    setSecondsLeft(durationRecommendation.plannedDurationMinutes * 60);
+    if (!visibleDurationRecommendation) return;
+    setFocusMinutes(visibleDurationRecommendation.plannedDurationMinutes);
+    setSecondsLeft(visibleDurationRecommendation.plannedDurationMinutes * 60);
     setDurationRecommendation(null);
   };
 
@@ -662,13 +737,13 @@ const FocusSessions = () => {
                   )}
                 </div>
               )}
-              {durationRecommendation && !recommendationDismissed && phase === 'setup' && (
-                <div className="rounded-2xl border border-[#6D9F46] bg-[#E2EDDA] p-4 shadow-[3px_3px_0_#D8E6CE]">
-                  <p className="text-sm font-semibold text-slate-900">15 min may work better</p>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Your recent Focus Sessions have gone better at 15 minutes.</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button type="button" onClick={useRecommendedDuration} className="rounded-xl bg-[#6D9F46] px-3 py-2 text-xs font-black text-[#18300F] shadow-[2px_2px_0_#D8E6CE]">Use 15 min</button>
-                    <button type="button" onClick={() => setRecommendationDismissed(true)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">Keep 25 min</button>
+               {visibleDurationRecommendation && !recommendationDismissed && phase === 'setup' && (
+                 <div className="rounded-2xl border border-[#6D9F46] bg-[#E2EDDA] p-4 shadow-[3px_3px_0_#D8E6CE]">
+                   <p className="text-sm font-semibold text-slate-900">{visibleDurationRecommendation.plannedDurationMinutes} min may work better</p>
+                   <p className="mt-1 text-xs leading-relaxed text-slate-600">Based on repeated Focus Session outcomes, this is a suggestion you can change.</p>
+                   <div className="mt-3 flex flex-wrap gap-2">
+                     <button type="button" onClick={useRecommendedDuration} className="rounded-xl bg-[#6D9F46] px-3 py-2 text-xs font-black text-[#18300F] shadow-[2px_2px_0_#D8E6CE]">Use {visibleDurationRecommendation.plannedDurationMinutes} min</button>
+                     <button type="button" onClick={() => setRecommendationDismissed(true)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">Keep my choice</button>
                   </div>
                 </div>
               )}
@@ -716,7 +791,9 @@ const FocusSessions = () => {
                 <StatsRow sessions={completedCount} totalMinutes={totalFocusedMinutes} streak={streak} weeklyMinutes={weeklyMinutes} />
                 <FocusCues />
               </>
-            )}
+              )}
+
+            <FocusSessionHistory userId={user?.id ?? null} refreshKey={`${lifecycle.interventionId ?? ''}:${lifecycle.status ?? ''}`} />
 
             {phase === 'celebration' && <CelebrationBanner onStartBreak={startBreak} onSkip={skipToNext} intent={intent} focusMinutes={focusMinutes} />}
             {phase === 'break' && <BreakMode secondsLeft={breakSecondsLeft} tip={breakTip} onEnd={resetToSetup} />}

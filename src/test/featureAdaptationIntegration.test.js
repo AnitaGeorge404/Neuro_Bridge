@@ -57,6 +57,18 @@ describe('Focus Session wiring (support.focus_session)', () => {
     expect(cfg.calmBreakTips).toBe(true);
     expect(cfg.focusMinutes).toBe(25);
   });
+
+  it("carries the engine's persisted-history Focus configuration to the feature", () => {
+    const signals = deriveFeatureSignals([{
+      type: 'MODIFY', target: 'PACING', parameters: {
+        focusConfiguration: { plannedDurationMinutes: 15, breakDurationMinutes: 5, confidence: 0.65 },
+      },
+    }]);
+    expect(buildFocusConfig({ signals, focusMinutes: 25 })).toMatchObject({
+      active: true, focusMinutes: 15, breakMinutes: 5,
+      recommendation: { plannedDurationMinutes: 15 },
+    });
+  });
 });
 
 describe('Adaptive Reading wiring (dyslexia.adaptive-reading)', () => {

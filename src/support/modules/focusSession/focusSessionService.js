@@ -52,6 +52,7 @@ export function normalizeFocusSessionHistory(entries = []) {
     const endedAt = outcome?.createdAt ?? lifecycleEvents.find((event) => TERMINAL_STATUSES.has(event?.toStatus))?.createdAt ?? null;
     const plannedDurationMinutes = finiteNumber(finalConfiguration.plannedDurationMinutes ?? metrics.plannedDurationMinutes ?? parameters.plannedDurationMinutes, 0);
     const actualDurationMs = finiteNumber(outcome?.durationMs ?? metrics.actualDurationMs, 0);
+    const durationValue = outcome?.durationMs ?? metrics.actualDurationMs;
     const completionRatio = Math.max(0, Math.min(1, finiteNumber(metrics.completionRatio, outcome?.status === "completed" ? 1 : 0)));
     return {
       id: intervention.id,
@@ -63,6 +64,7 @@ export function normalizeFocusSessionHistory(entries = []) {
       breakDurationMinutes: finiteNumber(finalConfiguration.breakDurationMinutes ?? metrics.breakDurationMinutes ?? parameters.breakDurationMinutes, 0),
       mode: finalConfiguration.mode ?? metrics.mode ?? parameters.mode ?? "focus",
       actualDurationMs,
+      durationAvailable: durationValue !== null && durationValue !== undefined && Number.isFinite(Number(durationValue)),
       secondsRemaining: Math.max(0, finiteNumber(metrics.secondsRemaining, Math.max(0, plannedDurationMinutes * 60 - Math.floor(actualDurationMs / 1000)))),
       completionRatio,
       status: outcome?.status ?? intervention.status ?? null,

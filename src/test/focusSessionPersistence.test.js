@@ -65,6 +65,7 @@ describe("Focus Session persistence and history", () => {
       breakDurationMinutes: 5,
       mode: "focus",
       actualDurationMs: 25 * 60000,
+      durationAvailable: true,
       secondsRemaining: 0,
       completionRatio: 1,
       pauseCount: 1,
@@ -88,6 +89,17 @@ describe("Focus Session persistence and history", () => {
     expect(reloaded.map((entry) => entry.plannedDurationMinutes).sort()).toEqual([15, 25]);
   });
 
+  it("marks an absent duration as unavailable instead of treating it as zero", async () => {
+    const repository = {
+      listInterventionsByModule: async () => [{ id: "without-duration", userId: "focus-history-user", moduleId: MODULE_ID, status: "completed", createdAt: "2026-09-11T10:00:00.000Z", parameters: {} }],
+      listLifecycleEvents: async () => [],
+      listOutcomes: async () => [{ id: "outcome", status: "completed", metrics: {}, createdAt: "2026-09-11T10:00:00.000Z" }],
+    };
+    const [session] = await getFocusSessionHistory("focus-history-user", { repository });
+    expect(session.actualDurationMs).toBe(0);
+    expect(session.durationAvailable).toBe(false);
+  });
+
   it("derives today, week, streak, and trends from persisted record values", () => {
     const now = new Date("2026-09-11T18:00:00.000Z");
     const history = [
@@ -103,7 +115,7 @@ describe("Focus Session persistence and history", () => {
     expect(deriveFocusDurationTrends(history).best).toMatchObject({ minutes: 25, sessions: 3, completionRate: 1 });
   });
 
-  it("only recommends a duration when repository outcomes contain a clear evidence-backed winner", async () => {
+  it("recommends the duration supported by each persisted history, and no duration with insufficient history", async () => {
     const repository = {
       listInterventions: async () => [],
       listLifecycleEvents: async () => [],
@@ -115,6 +127,17 @@ describe("Focus Session persistence and history", () => {
 
     const evidence = await getSupportEvidenceAsync("focus-evidence-user", [MODULE_ID], { repository });
     expect(recommendFocusConfiguration(evidence)).toMatchObject({ plannedDurationMinutes: 25, evidenceCount: 6 });
+
+    const shorterHistory = await getSupportEvidenceAsync("focus-evidence-user", [MODULE_ID], {
+      repository: {
+        ...repository,
+        listOutcomes: async () => [
+          outcome("short-a", 15, 1), outcome("short-b", 15, 1), outcome("short-c", 15, 1),
+          outcome("long-a", 45, 0.2, "abandoned"), outcome("long-b", 45, 0.3, "abandoned"),
+        ],
+      },
+    });
+    expect(recommendFocusConfiguration(shorterHistory)).toMatchObject({ plannedDurationMinutes: 15, evidenceCount: 5 });
 
     const insufficient = await getSupportEvidenceAsync("focus-evidence-user", [MODULE_ID], {
       repository: { ...repository, listOutcomes: async () => [outcome("only", 25, 1)] },

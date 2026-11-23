@@ -72,6 +72,10 @@ export function deriveFeatureSignals(adjustments = []) {
       (adj) => adj && SIMPLE_ACTION_TYPES.includes(adj.type) && types.includes(adj.type),
     );
 
+  const focusConfiguration = adjustments.find((adj) =>
+    adj?.type === "MODIFY" && adj?.target === "PACING" && adj?.parameters?.focusConfiguration,
+  )?.parameters.focusConfiguration ?? null;
+
   return {
     simplify: has(["SIMPLIFY"]),
     reduce: has(["REDUCE"]),
@@ -80,6 +84,7 @@ export function deriveFeatureSignals(adjustments = []) {
     guide: has(["GUIDE"]),
     reorder: has(["REORDER"]),
     modify: has(["MODIFY"]),
+    focusConfiguration,
     preferredStrategyId: tier9StrategyReference(adjustments, "prefer"),
     deprioritizedStrategyId: tier9StrategyReference(adjustments, "deprioritize"),
     active: (adjustments?.length ?? 0) > 0,
@@ -116,16 +121,22 @@ export function buildFocusConfig({ signals = {}, focusMinutes = DEFAULT_FOCUS_MI
   const slow = Boolean(signals.slowPace);
   const simplify = Boolean(signals.simplify);
 
-  const effectiveFocus = slow ? Math.min(15, focusMinutes) : focusMinutes;
+  const recommendedFocus = Number.isInteger(signals.focusConfiguration?.plannedDurationMinutes)
+    ? signals.focusConfiguration.plannedDurationMinutes
+    : null;
+  const effectiveFocus = slow ? Math.min(15, focusMinutes) : recommendedFocus ?? focusMinutes;
 
   return {
-    active: (signals?.active ?? false) || slow || simplify,
+    active: (signals?.active ?? false) || slow || simplify || Boolean(recommendedFocus),
     mode: slow ? "short_gentle_blocks" : simplify ? "simplified" : "normal",
     focusMinutes: clamp(effectiveFocus, 5, 60),
-    breakMinutes: slow ? 8 : DEFAULT_BREAK_MINUTES,
+    breakMinutes: slow ? 8 : Number.isInteger(signals.focusConfiguration?.breakDurationMinutes)
+      ? signals.focusConfiguration.breakDurationMinutes
+      : DEFAULT_BREAK_MINUTES,
     calmBreakTips: slow || simplify,
     reducedDistractions: simplify,
     gentlePacing: slow,
+    recommendation: signals.focusConfiguration,
   };
 }
 
