@@ -15,6 +15,7 @@ import {
 } from "./executionTypes";
 import { DEFERRED_MODULE_IDS, getModuleExecutor } from "./moduleExecutors";
 import { startFocusSessionIntervention, transitionFocusSessionIntervention } from "@/support/lifecycle/focusSessionLifecycle";
+import { startToolInteraction } from "@/support/persistence/toolInteractionPersistence";
 
 function now() {
   return new Date().toISOString();
@@ -159,42 +160,29 @@ export async function executeSupportModule(request) {
     }
   }
 
-  const delivered = deliverIntervention({
-    userId: executionRequest.userId,
-    module,
-    interventionId,
-    parameters: {
-      ...executionRequest.configuration,
-      execution: {
-        contextSnapshotId: executionRequest.contextSnapshotId,
-        triggerSource: executionRequest.triggerSource,
-        selectionMode: executionRequest.selectionMode,
-        metadata: executionRequest.metadata,
-        startTimestamp: now(),
+  try {
+    await startToolInteraction(executionRequest.userId, {
+      toolId: module.id,
+      interactionId: interventionId,
+      parameters: {
+        ...executionRequest.configuration,
+        execution: {
+          contextSnapshotId: executionRequest.contextSnapshotId,
+          triggerSource: executionRequest.triggerSource,
+          selectionMode: executionRequest.selectionMode,
+          metadata: executionRequest.metadata,
+          startTimestamp: now(),
+        },
       },
-    },
-  });
-
-  if (delivered.status !== "delivered") {
-    return createResult(executionRequest, appendState(lifecycle, ExecutionStatus.BLOCKED, "delivery_blocked"), {
-      status: ExecutionStatus.BLOCKED,
-      interventionId,
-      reasonCodes: delivered.reasonCodes ?? ["delivery_blocked"],
+      idempotencyKey,
+    });
+  } catch (error) {
+    return createResult(executionRequest, appendState(lifecycle, ExecutionStatus.FAILED, "persistence_failed"), {
+      status: ExecutionStatus.FAILED, interventionId,
+      error: error instanceof Error ? error.message : "Tool interaction persistence failed",
+      reasonCodes: ["persistence_failed"],
     });
   }
-
-  transitionIntervention({
-    userId: executionRequest.userId,
-    interventionId,
-    toStatus: InterventionStatus.STARTED,
-    reason: "execution_started",
-    metadata: {
-      contextSnapshotId: executionRequest.contextSnapshotId,
-      triggerSource: executionRequest.triggerSource,
-      selectionMode: executionRequest.selectionMode,
-      configuration: executionRequest.configuration,
-    },
-  });
 
   try {
     const launchResult = await moduleExecutor({
@@ -213,12 +201,6 @@ export async function executeSupportModule(request) {
       reasonCodes: ["execution_started"],
     });
   } catch (error) {
-    transitionIntervention({
-      userId: executionRequest.userId,
-      interventionId,
-      toStatus: InterventionStatus.FAILED,
-      reason: "executor_failed",
-    });
     return createResult(executionRequest, appendState(lifecycle, ExecutionStatus.FAILED, "executor_failed"), {
       status: ExecutionStatus.FAILED,
       interventionId,
