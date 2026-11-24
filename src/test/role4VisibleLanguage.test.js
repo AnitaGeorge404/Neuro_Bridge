@@ -11,6 +11,8 @@ import groundingSource from "../pages/depression/AnxietyDissolver.jsx?raw";
 import connectionSource from "../pages/depression/SocialBroadcaster.jsx?raw";
 import reframingSource from "../pages/depression/CognitiveReframer.jsx?raw";
 import journalSource from "../pages/depression/EvidenceFolder.jsx?raw";
+import adaptiveRuntimeSource from "../components/adaptive/AdaptiveUIRuntime.jsx?raw";
+import adaptiveSupportCardSource from "../components/adaptive/AdaptiveSupportCard.jsx?raw";
 
 const ACTIVE_MODULE_SOURCES = [
   adhdLandingSource,
@@ -44,5 +46,14 @@ describe("Role 4 visible English copy", () => {
     expect(depressionLandingSource).toContain('title: "Cognitive Reframing"');
     expect(journalSource).toContain("Evidence Journal");
     expect(journalSource).not.toContain("Proof your brain is lying");
+  });
+
+  it("does not render adaptive policy or decision diagnostics", () => {
+    ACTIVE_MODULE_SOURCES.forEach((source) => {
+      expect(source).not.toContain("Adapted for you");
+      expect(source).not.toContain("adaptation.reason");
+    });
+    expect(adaptiveSupportCardSource).not.toContain("recommendation.reason");
+    expect(adaptiveRuntimeSource).not.toContain("data-adaptive-execution-reason");
   });
 });

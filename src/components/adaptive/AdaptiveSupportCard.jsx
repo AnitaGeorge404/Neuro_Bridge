@@ -107,11 +107,6 @@ export default function AdaptiveSupportCard({
                     <span className="text-muted-foreground/80"> · {copy.duration}</span>
                   ) : null}
                 </p>
-                {recommendation.reason && (
-                  <p className="text-[11px] text-muted-foreground/70 mt-1.5 leading-snug">
-                    {recommendation.reason}
-                  </p>
-                )}
               </div>
             )}
           </div>

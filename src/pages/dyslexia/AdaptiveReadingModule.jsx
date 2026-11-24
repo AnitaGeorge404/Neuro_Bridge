@@ -2114,38 +2114,6 @@ function ReaderScreen({ docId, onBack }) {
         </div>
       </header>
 
-      {/* ── Adaptive Reading Notice ── */}
-      {adaptiveConfig?.active && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
-          transition={{ duration: 0.18 }}
-          className={cn(
-            "border-b px-6 py-3",
-            isDark
-              ? "border-emerald-400/20 bg-emerald-950/50"
-              : "border-emerald-200 bg-emerald-50",
-          )}
-        >
-          <div className="mx-auto max-w-3xl">
-            <p className="text-xs font-bold text-emerald-700">
-              Adapted for you:{" "}
-              {adaptiveConfig.mode === "slow_paced_reading"
-                ? "slower pacing"
-                : adaptiveConfig.mode === "focus_layout"
-                ? "focus mode and reading ruler on"
-                : "reading aids adjusted"}
-            </p>
-            {adaptation.reason && (
-              <p className="mt-0.5 text-xs text-emerald-800/70">
-                {adaptation.reason}
-              </p>
-            )}
-          </div>
-        </motion.div>
-      )}
-
       {/* ── AI Summary Banner ── */}
       <AnimatePresence>
         {summary && (

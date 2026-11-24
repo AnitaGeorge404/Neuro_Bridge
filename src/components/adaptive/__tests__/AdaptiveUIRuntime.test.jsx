@@ -514,7 +514,7 @@ describe("AdaptiveUIRuntime card behavior", () => {
     expect(screen.getByText("Personalized Support")).toBeInTheDocument();
     expect(screen.getByText(/Small steps might help/)).toBeInTheDocument();
     expect(screen.getByText(/Now · Next · Then/)).toBeInTheDocument();
-    expect(screen.getByText(/High cognitive load detected/)).toBeInTheDocument();
+    expect(screen.queryByText(/High cognitive load detected/)).not.toBeInTheDocument();
   });
 
   it("end-to-end: the real engine shows no card on a calm snapshot and a card on a stressed snapshot", () => {

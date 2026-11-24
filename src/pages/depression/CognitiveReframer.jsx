@@ -334,25 +334,6 @@ export default function CognitiveReframer() {
                   </div>
                 )}
 
-                {/* Adaptive Notice */}
-                {adaptiveConfig?.active && (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-[13px] leading-relaxed backdrop-blur-sm">
-                    <p className="font-black text-emerald-900">
-                      Adapted for you:{" "}
-                      {adaptiveConfig.mode === "guided_reframe"
-                        ? "a gentler, guided review"
-                        : adaptiveConfig.mode === "small_reframes"
-                        ? "fewer questions, lighter load"
-                        : adaptiveConfig.mode === "gentle_pacing"
-                        ? "a slower, steady pace"
-                        : "a softer approach"}
-                    </p>
-                    {adaptation.reason && (
-                      <p className="mt-0.5 text-emerald-900/70">{adaptation.reason}</p>
-                    )}
-                  </div>
-                )}
-
                 {/* Main Input Section */}
                 <section className="rounded-[24px] border border-indigo-200/80 bg-indigo-50/30 p-5 shadow-md shadow-slate-900/[0.02] transition-all duration-300 hover:-translate-y-1 hover:shadow-md sm:p-6">
                   <label htmlFor="thought" className="flex items-start gap-3.5 text-[16px] font-black text-slate-900">

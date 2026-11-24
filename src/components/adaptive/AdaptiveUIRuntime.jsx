@@ -454,14 +454,12 @@ export default function AdaptiveUIRuntime({ children, onExecution }) {
   // Traceability: record each effective change once (idempotent ledger).
   const ledgerRef = useRef(null);
   if (ledgerRef.current === null) ledgerRef.current = createExecutionLedger();
-  const [lastExecution, setLastExecution] = useState(null);
   const onExecutionRef = useRef(onExecution);
   onExecutionRef.current = onExecution;
   const appliedRef = useRef({ actions: [], at: null });
   useEffect(() => {
     const { duplicate, entry } = ledgerRef.current.commit(resolution, rawPlan);
     if (!duplicate && entry) {
-      setLastExecution(entry);
       onExecutionRef.current?.(entry);
     }
     // Explicit override: a state-driven adaptation that was applied is
@@ -576,7 +574,6 @@ export default function AdaptiveUIRuntime({ children, onExecution }) {
     "data-adaptive-guide": String(derived.flags.guide),
     "data-adaptive-simplify-nav": String(derived.flags.simplifyNav),
     "data-adaptive-execution": resolution.status,
-    "data-adaptive-execution-reason": (lastExecution?.reason ?? resolution.reason) || undefined,
   };
 
   if (!runtime.enabled) {
