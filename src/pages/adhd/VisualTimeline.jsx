@@ -971,26 +971,6 @@ export default function VisualTimeline() {
                 {/* ADD BAR                                                  */}
                 {/* ======================================================== */}
 
-                {adaptiveConfig?.active && (
-                  <section className="mt-6">
-                    <div className="rounded-[18px] border border-[#e6ddf7] bg-[#faf7ff] px-4 py-3 text-[11px] leading-relaxed">
-                      <p className="font-black text-[#6b4fc0]">
-                        Adapted for you:{" "}
-                        {adaptiveConfig.mode === "reduced_density"
-                          ? "lower visual density"
-                          : adaptiveConfig.mode === "calm_layout"
-                          ? "a calmer layout, one thing at a time"
-                          : "a gentler day view"}
-                      </p>
-                      {adaptation.reason && (
-                        <p className="mt-0.5 text-[#8b7cb9]">
-                          {adaptation.reason}
-                        </p>
-                      )}
-                    </div>
-                  </section>
-                )}
-
                 <section className="mt-6">
                   <AddBlockBar
                     entry={entry}

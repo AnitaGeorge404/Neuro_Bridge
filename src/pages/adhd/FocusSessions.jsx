@@ -726,17 +726,6 @@ const FocusSessions = () => {
 
                <div className="space-y-2">
               <PresetSelector selected={focusMinutes} onSelect={selectPreset} />
-              {effectiveAdaptationActive && (
-                <div className="rounded-2xl border border-[#cbb8ff] bg-[#fcf8ff] p-3 shadow-[2px_2px_0_#e6dcff]">
-                  <p className="text-xs font-bold text-slate-800">
-                    Adapted for you: {effectiveFocusMinutes} min block
-                    {calmBreakTips ? " · calmer pacing" : ""}
-                  </p>
-                  {adaptation.reason && (
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{adaptation.reason}</p>
-                  )}
-                </div>
-              )}
                {visibleDurationRecommendation && !recommendationDismissed && phase === 'setup' && (
                  <div className="rounded-2xl border border-[#6D9F46] bg-[#E2EDDA] p-4 shadow-[3px_3px_0_#D8E6CE]">
                    <p className="text-sm font-semibold text-slate-900">{visibleDurationRecommendation.plannedDurationMinutes} min may work better</p>

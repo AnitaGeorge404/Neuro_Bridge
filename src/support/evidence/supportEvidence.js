@@ -73,7 +73,9 @@ function focusEvidenceFromHistory(moduleId, interventions, events, outcomes) {
     byDuration.set(duration, entry);
   }
   const candidates = [...byDuration.entries()]
-    .filter(([, value]) => value.outcomes.length >= 2)
+    // A duration is only advisory after repeated successful attempts. This
+    // keeps a single completion from outweighing early abandoned sessions.
+    .filter(([, value]) => value.outcomes.length >= 3 && value.successful.length >= 2 && value.successful.length / value.outcomes.length >= 0.6)
     .map(([duration, value]) => ({
       duration,
       ...value,

@@ -32,7 +32,7 @@ export function buildAdaptationExplanation({ feature, baseline = {}, applied = {
   if (feature === "gentleActivity") {
     if (!changed(baseline.stepCount, applied.stepCount)) return null;
     return explanation(
-      "Adapted for you",
+      "A gentler start",
       "We've shortened this activity to make the next steps feel more manageable.",
       [`Steps: ${baseline.stepCount} to ${applied.stepCount}`],
     );
@@ -46,7 +46,7 @@ export function buildAdaptationExplanation({ feature, baseline = {}, applied = {
     if (orderChanged) changes.push(`Recommended first: ${applied.techniques?.[0]}`);
     if (pacingChanged) changes.push("Pace: Take it slowly");
     return explanation(
-      "Adapted for you",
+      "Take it at your pace",
       orderChanged
         ? `We've put ${applied.techniques?.[0]} first for this practice.`
         : "This practice is set up with a slower pace.",
@@ -62,7 +62,7 @@ export function buildAdaptationExplanation({ feature, baseline = {}, applied = {
     if (difficultyChanged) changes.push(`Difficulty: ${baseline.difficulty} to ${applied.difficulty}`);
     if (cuesEnabled) changes.push("Supportive cues: On");
     return explanation(
-      "Adapted for you",
+      "Practice adjusted",
       difficultyChanged && cuesEnabled
         ? "This scenario is a little easier and includes supportive cues."
         : difficultyChanged

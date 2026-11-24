@@ -144,4 +144,39 @@ describe("Focus Session persistence and history", () => {
     });
     expect(recommendFocusConfiguration(insufficient)).toBeNull();
   });
+
+  it("stays neutral when one completion is outweighed by abandoned attempts, including zero-duration attempts", async () => {
+    const repository = {
+      listInterventions: async () => [],
+      listLifecycleEvents: async () => [{ interventionId: "paused-only", moduleId: MODULE_ID, toStatus: "paused" }],
+      listOutcomes: async () => [
+        outcome("completed", 15, 1),
+        outcome("abandoned-zero-a", 15, 0, "abandoned"),
+        outcome("abandoned-zero-b", 15, 0, "abandoned"),
+        outcome("abandoned-four", 15, 4 / 15, "abandoned"),
+      ],
+    };
+
+    const evidence = await getSupportEvidenceAsync("sparse-focus-evidence-user", [MODULE_ID], { repository });
+    const entry = evidence.modules[0];
+
+    expect(entry).toMatchObject({ evidenceCount: 4, completedCount: 1, abandonedCount: 3, preferredConfiguration: null });
+    expect(recommendFocusConfiguration(evidence)).toBeNull();
+  });
+
+  it("stays neutral when contrasting duration histories are equally successful", async () => {
+    const repository = {
+      listInterventions: async () => [],
+      listLifecycleEvents: async () => [],
+      listOutcomes: async () => [
+        outcome("short-a", 15, 1), outcome("short-b", 15, 1), outcome("short-c", 15, 1),
+        outcome("standard-a", 25, 1), outcome("standard-b", 25, 1), outcome("standard-c", 25, 1),
+      ],
+    };
+
+    const evidence = await getSupportEvidenceAsync("ambiguous-focus-evidence-user", [MODULE_ID], { repository });
+
+    expect(evidence.modules[0].preferredConfiguration).toBeNull();
+    expect(recommendFocusConfiguration(evidence)).toBeNull();
+  });
 });
