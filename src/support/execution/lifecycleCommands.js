@@ -84,6 +84,7 @@ async function runTransition(request, action, toStatus, reason, metadata = {}) {
           [InterventionStatus.CANCELLED]: ToolEventType.CANCELLED,
           [InterventionStatus.FAILED]: ToolEventType.FAILED,
         })[toStatus] || ToolEventType.PROGRESSED,
+        timestamp: parsed.command.timestamp,
         idempotencyKey: parsed.command.metadata?.idempotencyKey,
         metadata: commandMetadata(parsed.command, metadata),
       });
@@ -158,9 +159,10 @@ export async function completeSupportModule(request) {
   }
   try {
     const persisted = await trackToolEvent(parsed.command.userId, {
-      toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId,
-      eventType: ToolEventType.COMPLETED,
-      idempotencyKey: parsed.command.metadata?.idempotencyKey,
+        toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId,
+        eventType: ToolEventType.COMPLETED,
+        timestamp: parsed.command.timestamp,
+        idempotencyKey: parsed.command.metadata?.idempotencyKey,
       outcome: { completed: toStatus === InterventionStatus.COMPLETED, durationMs: outcome.durationMs, rating: outcome.userRating,
         metrics: { ...outcome.metrics, finalConfiguration: outcome.finalConfiguration } },
     });
@@ -182,6 +184,7 @@ export async function abandonSupportModule(request) {
     try {
       const persisted = await trackToolEvent(parsed.command.userId, {
         toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId, eventType: ToolEventType.ABANDONED,
+        timestamp: parsed.command.timestamp,
         idempotencyKey: parsed.command.metadata?.idempotencyKey,
         outcome: parsed.command.outcome ? { completed: false, durationMs: parsed.command.outcome.durationMs, metrics: { ...parsed.command.outcome.metrics, finalConfiguration: parsed.command.outcome.finalConfiguration } } : undefined,
       });
@@ -256,8 +259,9 @@ export async function rateSupportModule(request) {
   let persisted;
   try {
     persisted = await trackToolEvent(parsed.command.userId, {
-      toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId, eventType: ToolEventType.FEEDBACK,
-      idempotencyKey: parsed.command.metadata?.idempotencyKey,
+        toolId: parsed.command.moduleId, interactionId: parsed.command.interventionId, eventType: ToolEventType.FEEDBACK,
+        timestamp: parsed.command.timestamp,
+        idempotencyKey: parsed.command.metadata?.idempotencyKey,
       outcome: { rating, metrics: { ratingSource: "user" } },
     });
   } catch (error) {
