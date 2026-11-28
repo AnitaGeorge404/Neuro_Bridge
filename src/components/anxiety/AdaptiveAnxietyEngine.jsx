@@ -44,7 +44,7 @@ import { rankAnxietyCandidates } from "./planning/anxietyRanker";
 // Engine integration imports
 import { useFeatureAdaptation } from "@/hooks/useFeatureAdaptation";
 import { useReflectionSignals } from "@/adaptive/reflection/useReflectionSignals";
-import { saveInterventionOutcome } from "@/support/persistence/role4Store";
+import { getRole4Repository } from "@/support/persistence/role4Repository";
 import { mapSubjectiveOutcomeToRating } from "@/adaptive/reflection/outcomeRatings";
 import {
   InterventionStatus,
@@ -106,6 +106,8 @@ export default function AdaptiveAnxietyEngine() {
   const [pendingOutcomeRecord, setPendingOutcomeRecord] = useState(null);
   const [lastCompletedOutcome, setLastCompletedOutcome] = useState(null);
   const [isDismissed, setIsDismissed] = useState(false);
+  const [telemetryConsent, setTelemetryConsent] = useState(false);
+  const persistedOutcomeRef = useRef(new Set());
 
   // Evaluator Debug Drawer
   const [showEvaluatorDrawer, setShowEvaluatorDrawer] = useState(false);
@@ -217,7 +219,7 @@ export default function AdaptiveAnxietyEngine() {
   // 1-Tap Outcome Feedback ([Better] [Same] [Worse]) → Role 4 outcome with the
   // shared rating mapping; the refreshed reflection then re-shapes the next
   // engine decision (Tier 9 closed loop).
-  const handleSelectOutcome = (subjectiveOutcome) => {
+  const handleSelectOutcome = async (subjectiveOutcome) => {
     if (!pendingOutcomeRecord) return;
     if (OUTCOME_SELF_REPORT[subjectiveOutcome]) {
       recordSelfReport({ state: OUTCOME_SELF_REPORT[subjectiveOutcome], moduleId: ANXIETY_MODULE_ID, source: "anxiety_outcome_checkin" });
@@ -234,11 +236,20 @@ export default function AdaptiveAnxietyEngine() {
       INTERVENTION_TO_STRATEGY[pendingOutcomeRecord.interventionId]?.split(":")[1] ??
       pendingOutcomeRecord.interventionId;
 
-    const outcomeRecord = saveInterventionOutcome(userId, {
+    // Feedback remains usable without telemetry. Persistence requires a
+    // separate, informed opt-in and never includes the response text.
+    if (!user?.id || !telemetryConsent) {
+      setPendingOutcomeRecord(null);
+      setIsDismissed(true);
+      return;
+    }
+    const outcomeId = `anxiety-out-${pendingOutcomeRecord.interventionId}-${sessionStartTime ?? "session"}`;
+    if (persistedOutcomeRef.current.has(outcomeId)) return;
+    const outcomeRecord = {
       schemaVersion: ROLE4_SCHEMA_VERSION,
-      id: `anxiety-out-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      userId,
-      interventionId: `anxiety-${pendingOutcomeRecord.interventionId}-${Date.now()}`,
+      id: outcomeId,
+      userId: user.id,
+      interventionId: `anxiety-${pendingOutcomeRecord.interventionId}-${sessionStartTime ?? "session"}`,
       moduleId: ANXIETY_MODULE_ID,
       interventionType,
       category: ModuleCategory.EMOTIONAL,
@@ -253,12 +264,18 @@ export default function AdaptiveAnxietyEngine() {
       completed: completionStatus === "completed",
       durationMs: Math.max(0, Math.round(pendingOutcomeRecord.durationSeconds * 1000)),
       rating: rating ?? undefined,
-      userFeedback: subjectiveOutcome,
-      metrics: { patternType: pendingOutcomeRecord.patternType },
-      contextSnapshot: pendingOutcomeRecord.stateSnapshot,
+      metrics: { completionReported: completionStatus === "completed" },
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    try {
+      const repository = await getRole4Repository(user.id);
+      await repository.appendOutcome(outcomeRecord);
+      persistedOutcomeRef.current.add(outcomeId);
+    } catch {
+      toast({ title: "Feedback not saved", description: "Your exercise was not changed. You can continue without saving feedback." });
+      return;
+    }
 
     reflection.refresh();
     setLastCompletedOutcome(outcomeRecord);
@@ -431,6 +448,11 @@ export default function AdaptiveAnxietyEngine() {
               Single tap helps NeuroBridge adapt future reset recommendations for you.
             </p>
           </div>
+
+          <label className="flex items-start gap-2 text-left text-xs text-[#6B7BA8]">
+            <input type="checkbox" checked={telemetryConsent} onChange={(event) => setTelemetryConsent(event.target.checked)} />
+            <span>Save anonymous-style exercise results to my private support history to improve future suggestions. This never saves what I wrote, my triggers, location, or clinical context.</span>
+          </label>
 
           {/* 3 Large Tap Targets: Better / Same / Worse */}
           <div className="grid grid-cols-3 gap-3">
