@@ -116,7 +116,9 @@ async function saveOutcome(repository, intervention, event) {
     moduleId: intervention.moduleId,
     interventionType: intervention.interventionType,
     category: intervention.category,
-    status: event.eventType === ToolEventType.FEEDBACK ? intervention.status : EVENT_STATUS[event.eventType],
+    // The intervention has already transitioned to its resolved status. In
+    // particular, a completed event may deliberately resolve as partial.
+    status: intervention.status,
     source: event.eventType === ToolEventType.FEEDBACK ? OutcomeSource.USER_REPORT : OutcomeSource.MODULE_EVENT,
     privacy: intervention.privacy || PrivacyLevel.PRIVATE,
     completed: event.outcome.completed,

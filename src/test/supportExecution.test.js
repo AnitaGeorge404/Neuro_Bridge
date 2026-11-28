@@ -39,9 +39,16 @@ describe("shared support execution", () => {
     expect(legacy.reasonCodes).toContain("invalid_module_id");
   });
 
-  it("blocks canonical modules deferred from availability", async () => {
-    const results = await Promise.all(["support.visual_timeline", "support.mood_checkin", "support.accountability_session", "support.soundscape"].map((moduleId) => executeSupportModule(validRequest({ moduleId }))));
+  it("blocks only canonical modules deferred from availability", async () => {
+    const results = await Promise.all(["support.soundscape"].map((moduleId) => executeSupportModule(validRequest({ moduleId }))));
     expect(results.every((result) => !result.ok && result.status === "blocked" && result.reasonCodes.includes("module_unavailable"))).toBe(true);
+  });
+
+  it("starts newly integrated registered tools through the shared lifecycle", async () => {
+    const moduleIds = ["support.visual_timeline", "support.mood_checkin", "support.accountability_session", "asd.social-scenarios", "asd.emotion-decoder"];
+    const results = await Promise.all(moduleIds.map((moduleId) => executeSupportModule(validRequest({ moduleId }))));
+
+    expect(results.every((result) => result.ok && result.status === "running")).toBe(true);
   });
 
   it("generates an intervention ID and records the start lifecycle", async () => {
