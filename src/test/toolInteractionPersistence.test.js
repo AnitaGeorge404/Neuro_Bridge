@@ -13,6 +13,11 @@ const TOOL_IDS = [
   "support.social_connection",
   "support.cognitive_reframing",
   "support.evidence_journal",
+  "support.mood_checkin",
+  "support.visual_timeline",
+  "support.accountability_session",
+  "asd.social-scenarios",
+  "asd.emotion-decoder",
 ];
 
 function request(moduleId, index) {

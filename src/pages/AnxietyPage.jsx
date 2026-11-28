@@ -14,6 +14,8 @@ import { useContextStateOptional } from "@/context/ContextProvider";
 import { useAuth } from "@/context/AuthContext";
 import AdaptationExplanation from "@/components/adaptive/AdaptationExplanation";
 import { buildAdaptationExplanation } from "@/adaptive/presentation/adaptationPresentation";
+import { abandonSupportModule, completeSupportModule, executeSupportModule } from "@/support/execution/executionApi";
+import { getRole4Repository } from "@/support/persistence/role4Repository";
 
 const anxietyInterventions = [
   {
@@ -118,6 +120,7 @@ const AGENT_EXERCISE_TO_INTERVENTION_ID = {
 
 export default function AnxietyPage() {
   const [activeIntervention, setActiveIntervention] = useState(null);
+  const [saveAnxietyProgress, setSaveAnxietyProgress] = useState(false);
   const { reduced, gentle } = useSensoryReducedMotion();
   const { user } = useAuth();
   const location = useLocation();
@@ -129,12 +132,55 @@ export default function AnxietyPage() {
   const adaptiveConfig = adaptation.configuration;
 
   const appliedAgentExerciseRef = useRef(false);
+  const activeExecutionRef = useRef(null);
+  const pendingLaunchKeyRef = useRef(null);
+  useEffect(() => {
+    let active = true;
+    if (!user?.id || !saveAnxietyProgress || activeExecutionRef.current) return undefined;
+    getRole4Repository(user.id).then((repository) => repository.listInterventionsByModule(user.id, "anxiety.hub")).then((records) => {
+      const restored = records.find((record) => ["created", "delivered", "in_progress", "paused"].includes(record.status));
+      const type = restored?.parameters?.interventionType;
+      if (!active || !restored || !["guided_breathing", "grounding_exercise", "calm_space"].includes(type)) return;
+      pendingLaunchKeyRef.current = restored.parameters?.execution?.metadata?.idempotencyKey ?? null;
+      activeExecutionRef.current = { id: restored.id, type, startedAt: Date.parse(restored.createdAt) || Date.now() };
+      setActiveIntervention(type);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [saveAnxietyProgress, user?.id]);
+  useEffect(() => {
+    const execution = activeExecutionRef.current;
+    if (saveAnxietyProgress || !execution || !user?.id) return;
+    activeExecutionRef.current = null;
+    pendingLaunchKeyRef.current = null;
+    void getRole4Repository(user.id).then((repository) => repository.deleteIntervention(user.id, execution.id)).catch(() => {});
+  }, [saveAnxietyProgress, user?.id]);
+  const launchIntervention = async (interventionType) => {
+    if (!user?.id || !saveAnxietyProgress || activeExecutionRef.current) {
+      setActiveIntervention(interventionType);
+      return;
+    }
+    const executionKey = pendingLaunchKeyRef.current || `anxiety:${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    pendingLaunchKeyRef.current = executionKey;
+    const started = await executeSupportModule({ userId: user.id, moduleId: "anxiety.hub", triggerSource: "manual", selectionMode: "explicit_request", configuration: { interventionType }, metadata: { interventionType, telemetryConsent: true, idempotencyKey: executionKey } });
+    if (!started.ok) return;
+    activeExecutionRef.current = { id: started.interventionId, type: interventionType, startedAt: Date.now() };
+    setActiveIntervention(interventionType);
+  };
+  const finishIntervention = async (completed) => {
+    const execution = activeExecutionRef.current;
+    setActiveIntervention(null);
+    activeExecutionRef.current = null;
+    if (!execution || !user?.id || !saveAnxietyProgress) return;
+    const request = { userId: user.id, moduleId: "anxiety.hub", interventionId: execution.id, metadata: { idempotencyKey: `anxiety:${execution.id}:terminal` }, outcome: { durationMs: Math.max(0, Date.now() - execution.startedAt), metrics: { completed: Boolean(completed) } } };
+    const result = await (completed ? completeSupportModule(request) : abandonSupportModule(request));
+    if (result.ok) pendingLaunchKeyRef.current = null;
+  };
   useEffect(() => {
     const exerciseType = location.state?.exercise_type;
     if (!exerciseType || appliedAgentExerciseRef.current) return;
     appliedAgentExerciseRef.current = true;
     const interventionId = AGENT_EXERCISE_TO_INTERVENTION_ID[exerciseType];
-    if (interventionId) setActiveIntervention(interventionId);
+    if (interventionId) void launchIntervention(interventionId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -265,10 +311,14 @@ export default function AnxietyPage() {
                     reduced={reduced}
                     gentle={gentle}
                     recommended={Boolean(adaptationExplanation) && i === 0}
-                    onLaunch={(id) => setActiveIntervention(id)}
+                    onLaunch={launchIntervention}
                   />
                 ))}
               </div>
+              {user?.id && <label className="mt-4 flex items-start gap-2 text-xs text-[#4E5E88] dark:text-[#D7E0F3]">
+                <input type="checkbox" checked={saveAnxietyProgress} onChange={(event) => setSaveAnxietyProgress(event.target.checked)} />
+                <span>Save private exercise progress to improve future support. You can use every exercise without saving; no responses, triggers, location, or clinical context are saved.</span>
+              </label>}
             </motion.section>
 
             {/* ── Adaptive Anxiety Engine & Evaluator Tools ── */}
@@ -306,8 +356,8 @@ export default function AnxietyPage() {
         <InterventionModal
           isOpen={Boolean(activeIntervention)}
           recommendationId={activeIntervention}
-          onClose={() => setActiveIntervention(null)}
-          onComplete={() => setActiveIntervention(null)}
+          onClose={() => void finishIntervention(false)}
+          onComplete={() => void finishIntervention(true)}
         />
       </SupportToolLayout>
     </SupportToolThemeProvider>

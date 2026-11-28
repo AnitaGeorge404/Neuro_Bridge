@@ -8,15 +8,14 @@ const supportedModuleIds = [
   "support.social_connection",
   "support.cognitive_reframing",
   "support.evidence_journal",
+  "support.mood_checkin",
+  "support.visual_timeline",
+  "support.accountability_session",
+  "asd.social-scenarios",
+  "asd.emotion-decoder",
 ];
 
-export const DEFERRED_MODULE_IDS = new Set([
-  "support.visual_timeline",
-  "support.mood_checkin",
-  "support.accountability_session",
-  "support.soundscape",
-  "asd.social-scenarios",
-]);
+export const DEFERRED_MODULE_IDS = new Set(["support.soundscape"]);
 
 async function startPlaceholderExecutor() {
   return { ok: true, status: "started" };

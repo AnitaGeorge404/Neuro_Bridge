@@ -42,14 +42,7 @@ import {
 import { evaluateResponse } from "@/support/modules/socialScenarioSimulator/evaluationService";
 import { useReflectionSignals } from "@/adaptive/reflection/useReflectionSignals";
 import { resolveOutcomeRating } from "@/adaptive/reflection/outcomeRatings";
-import { saveInterventionOutcome } from "@/support/persistence/role4Store";
-import { ROLE4_SCHEMA_VERSION } from "@/support/schemas/storageKeys";
-import {
-  InterventionStatus,
-  ModuleCategory,
-  OutcomeSource,
-  PrivacyLevel,
-} from "@/support/schemas/supportSchemas";
+import { useInterventionLifecycle } from "@/support/execution";
 import {
   AsdCard,
   AsdCharacter,
@@ -149,6 +142,7 @@ export default function SocialScenarioSimulatorCard() {
   const [voiceCapture, setVoiceCapture] = useState(null);
   const [stats, setStats] = useState({ totalAttempts: 0, averageScore: null });
   const [recentAttempts, setRecentAttempts] = useState([]);
+  const lifecycle = useInterventionLifecycle({ userId, moduleId: SOCIAL_SCENARIO_MODULE_ID, configuration: {} });
 
   const userPreferences = useMemo(() => buildUserPreferencesFragment(user), [user]);
 
@@ -219,11 +213,12 @@ export default function SocialScenarioSimulatorCard() {
   }, [category, difficulty]);
 
   const handleNext = useCallback(() => {
+    if (lifecycle.isTerminal) lifecycle.reset();
     setVariantSeed((current) => current + 1);
     setResponse("");
     setResult(null);
     setVoiceCapture(null);
-  }, []);
+  }, [lifecycle]);
 
   useEffect(() => {
     if (variantSeed > 0) {
@@ -272,36 +267,29 @@ export default function SocialScenarioSimulatorCard() {
     const rating = resolveOutcomeRating({
       score: Number.isFinite(evaluation.score) ? evaluation.score : undefined,
     });
-    const now = new Date().toISOString();
-    saveInterventionOutcome(userId, {
-      schemaVersion: ROLE4_SCHEMA_VERSION,
-      id: `scenario-out-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      userId,
-      interventionId: `scenario-${scenario.id ?? "round"}-${Date.now()}`,
-      moduleId: SOCIAL_SCENARIO_MODULE_ID,
-      interventionType: "social_scenario_simulation",
-      category: ModuleCategory.SPECIALIZED,
-      status: InterventionStatus.COMPLETED,
-      source: OutcomeSource.MODULE_EVENT,
-      privacy: PrivacyLevel.PRIVATE,
-      completed: true,
-      rating: rating ?? undefined,
-      metrics: {
-        score: evaluation.score ?? null,
-        difficulty: scenario.difficulty ?? null,
-        category: scenario.category ?? null,
-        scenarioId: scenario.id ?? null,
-        usedAi: evaluation.usedAi === true,
-        voiceUsed: Boolean(voiceCapture),
-      },
-      createdAt: now,
-      updatedAt: now,
-    });
+    if (userId) {
+      const started = lifecycle.hasStarted ? { ok: true } : await lifecycle.start({}, {
+        category,
+        difficulty,
+      });
+      if (!started.ok) return;
+      const completed = await lifecycle.complete({
+        userRating: rating ?? undefined,
+        metrics: {
+          score: evaluation.score ?? null,
+          difficulty: scenario.difficulty ?? null,
+          category: scenario.category ?? null,
+          usedAi: evaluation.usedAi === true,
+          voiceUsed: Boolean(voiceCapture),
+        },
+      });
+      if (!completed.ok) return;
+    }
     reflection.refresh();
 
     recordEvent(PROGRESS_EVENTS.SCENARIO_PRACTISED);
     refreshStats();
-  }, [scenario, response, voiceCapture, config, apiKey, userId, refreshStats, recordEvent, reflection]);
+  }, [scenario, response, voiceCapture, config, apiKey, userId, category, difficulty, lifecycle, refreshStats, recordEvent, reflection]);
 
   const showCues = config.hintsEnabled || result || config.deprioritizedByHistory;
   const cuesToShow = showCues

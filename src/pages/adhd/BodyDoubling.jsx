@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import SupportToolThemeProvider from '@/theme/SupportToolThemeProvider';
 import SupportToolLayout from '@/components/support/SupportToolLayout';
+import { useAuth } from '@/context/AuthContext';
+import { useInterventionLifecycle } from '@/support/execution';
 
 const notes = [
   'Choose one task before starting.',
@@ -15,11 +17,14 @@ const notes = [
 ];
 
 export default function BodyDoubling() {
+  const { user } = useAuth();
   const [isLive, setIsLive] = useState(false);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [commitment, setCommitment] = useState('');
   const [showCommitmentToast, setShowCommitmentToast] = useState(false);
   const [showCommitmentReview, setShowCommitmentReview] = useState(false);
+  const lifecycle = useInterventionLifecycle({ userId: user?.id ?? null, moduleId: 'support.accountability_session', configuration: {} });
+  const wasLive = React.useRef(false);
 
   useEffect(() => {
     if (!isLive) return undefined;
@@ -27,11 +32,22 @@ export default function BodyDoubling() {
     return () => clearInterval(interval);
   }, [isLive]);
 
-  const startSession = () => {
+  useEffect(() => {
+    if (wasLive.current && !isLive && user?.id && lifecycle.hasStarted) {
+      void lifecycle.complete({ durationMs: sessionSeconds * 1000, metrics: { commitmentSet: true, elapsedSeconds: sessionSeconds } });
+    }
+    wasLive.current = isLive;
+  }, [isLive, lifecycle, sessionSeconds, user?.id]);
+
+  const startSession = async () => {
     if (!commitment.trim()) {
       setShowCommitmentToast(true);
       setTimeout(() => setShowCommitmentToast(false), 3000);
       return;
+    }
+    if (user?.id) {
+      const started = await lifecycle.start({}, { commitmentSet: true });
+      if (!started.ok) return;
     }
     setSessionSeconds(0);
     setIsLive(true);

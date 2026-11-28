@@ -53,6 +53,7 @@ import {
 } from "@/components/asd/ui";
 import { useSensoryReducedMotion } from "@/hooks/useSensoryReducedMotion";
 import { recordTaskEvent, TaskEventType } from "@/adaptive/context/interactionEvidence.js";
+import { useInterventionLifecycle } from "@/support/execution";
 
 const CHARACTER_TONES = ["teal", "sky", "amber", "violet", "rose"];
 const QUICK_FEELINGS = ["Happy", "Worried", "Excited", "Nervous", "Proud", "Frustrated", "Calm", "Confused"];
@@ -116,6 +117,8 @@ export default function EmotionDecoderCard() {
   const [fallbackIndex, setFallbackIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [aiUnavailable, setAiUnavailable] = useState(false);
+  const scenarioStartedAtRef = useRef(Date.now());
+  const lifecycle = useInterventionLifecycle({ userId, moduleId: EMOTION_DECODER_MODULE_ID, configuration: {} });
 
   const userPreferences = useMemo(() => buildUserPreferencesFragment(user), [user]);
 
@@ -158,6 +161,7 @@ export default function EmotionDecoderCard() {
       try {
         const outcome = await generateDecoderScenario(nextConfig ?? config, { apiKey });
         setScenario(outcome.scenario);
+        scenarioStartedAtRef.current = Date.now();
         setAiUnavailable(!outcome.aiAvailable);
       } finally {
         setLoading(false);
@@ -178,9 +182,30 @@ export default function EmotionDecoderCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [difficulty, activityType]);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     const evaluation = evaluateDecoderAnswer({ scenario, answer });
     if (!evaluation.answered) return;
+    const nextAttempts = attempts + 1;
+    const nextCorrect = correctCount + (evaluation.correct ? 1 : 0);
+    if (userId) {
+      const started = lifecycle.hasStarted ? { ok: true } : await lifecycle.start({}, {
+        activityType,
+        difficulty,
+      });
+      if (!started.ok) return;
+      const completed = await lifecycle.complete({
+        durationMs: Math.max(0, Date.now() - scenarioStartedAtRef.current),
+        metrics: {
+          activityType,
+          difficulty,
+          attempts: nextAttempts,
+          correct: nextCorrect,
+          accuracy: nextAttempts ? nextCorrect / nextAttempts : 0,
+          hintsUsed,
+        },
+      });
+      if (!completed.ok) return;
+    }
     setResult(evaluation);
     setAttempts((current) => current + 1);
     // An answered-but-incorrect attempt is a failed action for the shared
@@ -193,13 +218,14 @@ export default function EmotionDecoderCard() {
       setCorrectCount((current) => current + 1);
       recordEvent(PROGRESS_EVENTS.EMOTION_SOLVED);
     }
-  }, [scenario, answer, recordEvent]);
+  }, [activityType, answer, attempts, correctCount, difficulty, hintsUsed, lifecycle, recordEvent, scenario, userId]);
 
   const handleNext = useCallback(() => {
+    if (lifecycle.isTerminal) lifecycle.reset();
     setFallbackIndex((current) => current + 1);
     setAnswer("");
     setResult(null);
-  }, []);
+  }, [lifecycle]);
 
   useEffect(() => {
     if (fallbackIndex > 0) {
