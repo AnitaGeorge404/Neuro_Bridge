@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BatteryMedium,
   Brain,
@@ -26,6 +26,8 @@ import { useContextStateOptional } from "@/context/ContextProvider";
 import { useFeatureAdaptation } from "@/hooks/useFeatureAdaptation";
 import SupportToolThemeProvider from "@/theme/SupportToolThemeProvider";
 import SupportToolLayout from "@/components/support/SupportToolLayout";
+import { getRole4Repository } from "@/support/persistence/role4Repository";
+import { deletePrivateTimelineContent, loadPrivateTimelineContent, savePrivateTimelineContent } from "@/support/persistence/visualTimelineContentRepository";
 
 /* -------------------------------------------------------------------------- */
 /*                                   utils                                    */
@@ -43,6 +45,11 @@ const toTime = (minutes) =>
 
 const todayKey = (date = new Date()) =>
   date.toISOString().slice(0, 10);
+
+const TIMELINE_MODULE_ID = "support.visual_timeline";
+const timelineMemoryKey = () => `timeline-blocks-${todayKey()}`;
+const restoredLabel = (category) => category === "morning" ? "Morning routine" : category === "break" ? "Reset block" : "Focus block";
+const blockId = () => typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `timeline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const samples = [
   {
@@ -67,6 +74,8 @@ const samples = [
     category: "break",
   },
 ];
+
+const sampleBlocks = () => samples.map((block) => ({ ...block, done: false, started: false, persistent: false }));
 
 /* -------------------------------------------------------------------------- */
 /*                               visual system                                */
@@ -602,13 +611,11 @@ export default function VisualTimeline() {
     ? "compact"
     : density;
 
-  const [blocks, setBlocks] = useState(
-    samples.map((block) => ({
-      ...block,
-      done: false,
-      started: false,
-    })),
-  );
+  const [blocks, setBlocks] = useState(sampleBlocks);
+  const [timelineHydrated, setTimelineHydrated] = useState(false);
+  const [timelineError, setTimelineError] = useState(null);
+  const [saveLabels, setSaveLabels] = useState(false);
+  const timelineChangedRef = useRef(false);
 
   const [dump, setDump] = useState([
     {
@@ -628,7 +635,69 @@ export default function VisualTimeline() {
   const [start, setStart] = useState("12:00");
   const [end, setEnd] = useState("12:30");
 
-  const id = useRef(100);
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setBlocks(sampleBlocks());
+      setTimelineHydrated(true);
+      return () => { active = false; };
+    }
+    setTimelineHydrated(false);
+    setTimelineError(null);
+    Promise.all([getRole4Repository(user.id).then((repository) => repository.listMemories(user.id, TIMELINE_MODULE_ID)), loadPrivateTimelineContent(user.id, todayKey()).catch(() => [])])
+      .then(([memories, privateBlocks]) => {
+        if (!active) return;
+        const snapshot = memories.find((memory) => memory.key === timelineMemoryKey() && memory.metadata?.recordKind === "timeline_blocks");
+        const restored = Array.isArray(snapshot?.value?.blocks)
+          ? snapshot.value.blocks
+            .filter((block) => typeof block?.id === "string" && /^\d{2}:\d{2}$/.test(block.start) && /^\d{2}:\d{2}$/.test(block.end))
+            .map((block) => ({ ...block, label: privateBlocks.find((privateBlock) => privateBlock?.id === block.id)?.label || restoredLabel(block.category), persistent: true }))
+          : [];
+        if (!timelineChangedRef.current) setBlocks([...sampleBlocks(), ...restored]);
+        setTimelineHydrated(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setBlocks(sampleBlocks());
+        setTimelineError("Your timeline could not be restored. You can keep planning locally and try again later.");
+        setTimelineHydrated(true);
+      });
+    return () => { active = false; };
+  }, [user?.id]);
+
+  const persistBlocks = useCallback(async (nextBlocks) => {
+    if (!user?.id) return;
+    const now = new Date().toISOString();
+    const persistedBlocks = nextBlocks
+      .filter((block) => block.persistent)
+      .map(({ id: blockIdValue, start: blockStart, end: blockEnd, category, done, started }) => ({ id: String(blockIdValue), start: blockStart, end: blockEnd, category, done: Boolean(done), started: Boolean(started) }));
+    try {
+      const repository = await getRole4Repository(user.id);
+      const key = timelineMemoryKey();
+      await repository.upsertMemory({
+        schemaVersion: 1, id: `visual-timeline-${todayKey()}`, memoryId: `visual-timeline-${todayKey()}`,
+        userId: user.id, moduleId: TIMELINE_MODULE_ID, category: "preferred_configuration", type: "preference", key,
+        value: { version: 1, date: todayKey(), blocks: persistedBlocks }, evidenceCount: 0, supportingReflectionIds: [],
+        confidence: "moderate", version: 1, status: "active", contradictionCount: 0, metadata: { recordKind: "timeline_blocks" },
+        privacy: "private", source: "module_event", evidenceIds: [], createdAt: now, updatedAt: now,
+      });
+      if (saveLabels) await savePrivateTimelineContent(user.id, todayKey(), nextBlocks.filter((block) => block.persistent).map(({ id, label }) => ({ id: String(id), label: String(label).slice(0, 200) })));
+      setTimelineError(null);
+    } catch {
+      setTimelineError("Your latest timeline change was not saved. Try the action again when your connection is available.");
+    }
+  }, [saveLabels, user?.id]);
+
+  const deleteSavedLabels = async () => {
+    if (!user?.id) return;
+    try {
+      await deletePrivateTimelineContent(user.id, todayKey());
+      setSaveLabels(false);
+      setBlocks((items) => items.map((block) => block.persistent ? { ...block, label: restoredLabel(block.category) } : block));
+    } catch {
+      setTimelineError("Your saved private labels could not be deleted. Try again when your connection is available.");
+    }
+  };
 
   const now =
     new Date().getHours() * 60 +
@@ -643,20 +712,24 @@ export default function VisualTimeline() {
   );
 
   const update = (blockId, patch) =>
-    setBlocks((items) =>
-      items.map((block) =>
+    setBlocks((items) => {
+      timelineChangedRef.current = true;
+      const next = items.map((block) =>
         block.id === blockId
           ? {
               ...block,
               ...patch,
             }
           : block,
-      ),
-    );
+      );
+      void persistBlocks(next);
+      return next;
+    });
 
   const snooze = (blockId) =>
-    setBlocks((items) =>
-      items.map((block) =>
+    setBlocks((items) => {
+      timelineChangedRef.current = true;
+      const next = items.map((block) =>
         block.id === blockId
           ? {
               ...block,
@@ -668,8 +741,10 @@ export default function VisualTimeline() {
               ),
             }
           : block,
-      ),
-    );
+      );
+      void persistBlocks(next);
+      return next;
+    });
 
   const completed = blocks.filter(
     (block) => block.done,
@@ -734,51 +809,67 @@ export default function VisualTimeline() {
 
     if (!entry.trim()) return;
 
-    setBlocks((items) => [
-      ...items,
-      {
-        id: ++id.current,
+    setBlocks((items) => {
+      timelineChangedRef.current = true;
+      const next = [...items, {
+        id: blockId(),
         label: entry.trim(),
         start,
         end,
         category: "study",
         done: false,
         started: false,
-      },
-    ]);
+        persistent: true,
+      }];
+      void persistBlocks(next);
+      return next;
+    });
 
     setEntry("");
   };
 
   const addPreset = (type) => {
     if (type === "morning") {
-      setBlocks((items) => [
-        ...items,
-        {
-          id: ++id.current,
+      setBlocks((items) => {
+        timelineChangedRef.current = true;
+        const next = [...items, {
+          id: blockId(),
           label: "Morning routine",
           start: "07:00",
           end: "08:00",
           category: "morning",
           done: false,
           started: false,
-        },
-      ]);
+          persistent: true,
+        }];
+        void persistBlocks(next);
+        return next;
+      });
     } else {
-      setBlocks((items) => [
-        ...items,
-        {
-          id: ++id.current,
+      setBlocks((items) => {
+        timelineChangedRef.current = true;
+        const next = [...items, {
+          id: blockId(),
           label: "Focus block",
           start: "09:00",
           end: "10:00",
           category: "study",
           done: false,
           started: false,
-        },
-      ]);
+          persistent: true,
+        }];
+        void persistBlocks(next);
+        return next;
+      });
     }
   };
+
+  const removeBlock = (blockIdValue) => setBlocks((items) => {
+    timelineChangedRef.current = true;
+    const next = items.filter((item) => item.id !== blockIdValue);
+    void persistBlocks(next);
+    return next;
+  });
 
   return (
     <SupportToolThemeProvider theme="adhd_focus">
@@ -981,6 +1072,17 @@ export default function VisualTimeline() {
                     setEnd={setEnd}
                     onSubmit={addBlock}
                   />
+                  {user?.id && <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[#626878]">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={saveLabels} onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setSaveLabels(enabled);
+                        if (enabled) void savePrivateTimelineContent(user.id, todayKey(), blocks.filter((block) => block.persistent).map(({ id, label }) => ({ id: String(id), label: String(label).slice(0, 200) }))).catch(() => setTimelineError("Your private labels could not be saved. Try again when your connection is available."));
+                      }} />
+                      Save my task labels privately for this day
+                    </label>
+                    {saveLabels && <button type="button" className="underline" onClick={deleteSavedLabels}>Delete saved labels</button>}
+                  </div>}
                 </section>
 
                 {/* ======================================================== */}
@@ -1009,6 +1111,7 @@ export default function VisualTimeline() {
                       />
                     </div>
 
+                    {timelineError && <p role="alert" className="mb-3 text-xs text-rose-700">{timelineError}</p>}
                     <div
                       className={
                         effectiveDensity === "compact"
@@ -1026,14 +1129,7 @@ export default function VisualTimeline() {
                           compact={
                             effectiveDensity === "compact"
                           }
-                          remove={(blockId) =>
-                            setBlocks((items) =>
-                              items.filter(
-                                (item) =>
-                                  item.id !== blockId,
-                              ),
-                            )
-                          }
+                          remove={removeBlock}
                         />
                       ))}
                     </div>

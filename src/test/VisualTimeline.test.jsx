@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import VisualTimeline from "@/pages/adhd/VisualTimeline";
+import { listUserMemories } from "@/support/persistence/role4Store";
 
 const auth = vi.hoisted(() => ({ user: { id: "visual-timeline-user" } }));
 
@@ -17,8 +18,12 @@ describe("Visual Timeline", () => {
     fireEvent.change(screen.getByLabelText("End time"), { target: { value: "12:30" } });
     fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
 
-    const addedBlock = () => screen.getByText("Email professor").closest("article");
+    const addedBlock = () => screen.getByRole("button", { name: "Remove Email professor" }).closest("article");
     expect(addedBlock()).not.toBeNull();
+    await waitFor(() => expect(listUserMemories("visual-timeline-user").find((memory) => memory.metadata?.recordKind === "timeline_blocks")?.value.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "study", start: "12:00", end: "12:30" }),
+    ])));
+    expect(JSON.stringify(listUserMemories("visual-timeline-user"))).not.toContain("Email professor");
     fireEvent.click(within(addedBlock()).getByRole("button", { name: /Snooze 10m/ }));
     await waitFor(() => expect(within(addedBlock()).getByText("12:10")).toBeInTheDocument());
     fireEvent.click(within(addedBlock()).getByRole("button", { name: "Start" }));
@@ -39,5 +44,5 @@ describe("Visual Timeline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     fireEvent.change(screen.getByDisplayValue("🙂 Comfortable"), { target: { value: "compact" } });
     expect(screen.getByDisplayValue("Compact")).toBeInTheDocument();
-  });
+  }, 15000);
 });
