@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "benchmark": "NeuroBridge reliability benchmark",
+  "seed": 20261128,
+  "definitions": {
+    "memoryOracle": "Accept selected_style only when a valid history has a unique plurality with at least two observations; reject ties and single observations. This is defined here independently of the production memory implementation.",
+    "ungatedReference": "Writes the first observed selected_style in every non-empty history. It is a deliberately simple reference, not a production baseline.",
+    "persistenceScope": "All persistence measurements use createLocalRole4Repository and count repository method calls; they are not database writes or database-level guarantees.",
+    "consentScope": "The benchmark verifies the existing learning-disabled gate only. It does not establish consent requirements for lifecycle persistence or live database policy enforcement."
+  },
+  "scenarios": {
+    "memory": {
+      "total": 204,
+      "byScenario": {
+        "insufficient_evidence": 34,
+        "sufficient_positive": 34,
+        "conflicting_outcomes": 34,
+        "repeated_observations": 34,
+        "abandoned": 34,
+        "threshold_boundary": 34
+      }
+    },
+    "idempotency": {
+      "sequentialDuplicates": 1,
+      "concurrentDuplicates": 1,
+      "repositoryKind": "local"
+    },
+    "lifecycle": {
+      "tools": [
+        "support.task_breakdown",
+        "support.gentle_activity",
+        "support.grounding",
+        "support.social_connection",
+        "support.cognitive_reframing",
+        "support.evidence_journal",
+        "support.mood_checkin",
+        "support.visual_timeline",
+        "support.accountability_session",
+        "asd.social-scenarios",
+        "asd.emotion-decoder"
+      ],
+      "validTransitionsPerTool": 1,
+      "invalidTransitionsPerTool": 1
+    },
+    "isolationAndConsent": {
+      "applicationScenarios": 4,
+      "liveRlsExecuted": false
+    }
+  },
+  "metrics": {
+    "evidenceGatedMemory": {
+      "attempted": 204,
+      "prematureWrites": 0,
+      "incorrectUpdates": 0,
+      "correctlyAccepted": 136,
+      "correctlyRejected": 68,
+      "ungatedWrites": 204,
+      "decisionCorrectnessRate": 1,
+      "ungatedReferenceWrites": 204,
+      "avoidedWritesVsUngatedReference": 68
+    },
+    "idempotency": {
+      "totalAttemptedRequests": 4,
+      "actualPersistenceOperations": 14,
+      "duplicateRecordsCreated": 0,
+      "redundantWritesPrevented": 1,
+      "sequentialDuplicatePreventionRate": 1,
+      "concurrentResults": [
+        "fulfilled",
+        "rejected"
+      ],
+      "databaseWritesMeasured": false
+    },
+    "lifecycle": {
+      "toolsCovered": 11,
+      "validTransitionsTested": 11,
+      "invalidTransitionsTested": 11,
+      "validTransitionAcceptanceRate": 1,
+      "invalidTransitionRejectionRate": 1,
+      "unexpectedStateMutations": 0,
+      "mutationTools": [],
+      "nonRejectingTools": []
+    },
+    "isolationAndConsent": {
+      "crossUserReadRejected": true,
+      "crossUserWriteRejected": true,
+      "learningDisabledWritePrevented": true,
+      "authorizedOperation": true
+    }
+  },
+  "limitations": [
+    "Synthetic deterministic inputs test decision correctness, not production latency or user outcomes.",
+    "Concurrent duplicate behavior is measured with an in-process local repository and cannot establish cross-process or database atomicity.",
+    "No live Supabase/PostgreSQL credentials were used; SQL RLS tests were not executed."
+  ],
+  "environment": {
+    "node": "v22.19.0",
+    "platform": "win32",
+    "gitCommit": "4032402c0c522f7a4ada1e9b43adf820df2ac622",
+    "gitStatus": "?? results/"
+  },
+  "reproduction": [
+    "npm run benchmark:reliability"
+  ]
+}
