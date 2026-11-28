@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import SupportToolThemeProvider from '@/theme/SupportToolThemeProvider';
 import SupportToolLayout from '@/components/support/SupportToolLayout';
+import { useAuth } from '@/context/AuthContext';
+import { useInterventionLifecycle } from '@/support/execution';
 // Explicit check-in → self-report channel of the shared context-to-state
 // inference (kept separate from anything inferred from behaviour).
 import { recordSelfReport } from '@/adaptive/context/interactionEvidence.js';
@@ -43,18 +45,27 @@ const extractPatternTags = (text) => {
 };
 
 export default function EmotionCoach() {
+  const { user } = useAuth();
   const [selectedMood, setSelectedMood] = useState(null);
   const [note, setNote] = useState('');
   const [patterns, setPatterns] = useState([]);
   const [insightTags, setInsightTags] = useState([]);
   const [activePrompt, setActivePrompt] = useState(null);
+  const lifecycle = useInterventionLifecycle({ userId: user?.id ?? null, moduleId: 'support.mood_checkin', configuration: {} });
   const selected = moods.find((mood) => mood.id === selectedMood);
   const suggestions = selectedMood ? suggestionsByMood[selectedMood] : [];
 
-  const savePattern = () => {
+  const savePattern = async () => {
     const trimmed = note.trim();
-    if (!trimmed) return;
+    if (!trimmed || !selectedMood) return;
     const tags = extractPatternTags(trimmed);
+    if (user?.id) {
+      const started = lifecycle.hasStarted ? { ok: true } : await lifecycle.start({}, { mood: selectedMood });
+      if (!started.ok) return;
+      const completed = await lifecycle.complete({ durationMs: 0, metrics: { mood: selectedMood, patternTags: tags, savedPattern: true } });
+      if (!completed.ok) return;
+      lifecycle.reset();
+    }
     setInsightTags(tags);
     setPatterns((items) => [{ id: Date.now(), moodLabel: selected?.label || 'Unknown', note: trimmed, tags }, ...items].slice(0, 5));
     try {
@@ -62,7 +73,7 @@ export default function EmotionCoach() {
         recordWellbeingInteraction({
           interactionType: WELLBEING_INTERACTION_TYPES.MOOD_CHECKIN_COMPLETED,
           source: 'adhd.emotion-coach',
-          metadata: { mood: selected?.label, note: trimmed }
+          metadata: { mood: selected?.label, patternTags: tags }
         });
       }).catch(() => {});
     } catch (e) {}

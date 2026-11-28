@@ -36,6 +36,7 @@ function recordLifecycleEvidence(type, moduleId, interventionId) {
 const TERMINAL_STATUSES = new Set([
   "completed",
   "partially_completed",
+  "rated",
   "abandoned",
   "cancelled",
   "failed",
