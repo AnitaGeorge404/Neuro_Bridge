@@ -96,8 +96,8 @@
   "environment": {
     "node": "v22.19.0",
     "platform": "win32",
-    "gitCommit": "4032402c0c522f7a4ada1e9b43adf820df2ac622",
-    "gitStatus": "?? results/"
+    "gitCommit": "c389f89354096ef28f8865af4550815f2f331ebc",
+    "gitStatus": "M backend/adaptive/engine/__tests__/featureFlags.test.js\n M backend/adaptive/engine/__tests__/role4ReflectionIntegration.test.js\nA  docs/BENCHMARK_METHODOLOGY.md\nM  package.json\n M src/adaptive/reflection/__tests__/reflectionEngine.test.js\nA  src/benchmarks/reliabilityBenchmark.test.js\n M src/hooks/__tests__/useAdaptiveBehavioralEngine.test.jsx\n M src/support/execution/lifecycleCommands.js\n M src/test/AgentChatVoice.test.jsx\n M src/test/TaskBreakdownLifecycle.test.jsx\n M src/test/gardenStore.test.js\n?? results/"
   },
   "reproduction": [
     "npm run benchmark:reliability"
